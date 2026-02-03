@@ -1,21 +1,15 @@
-## Everything in this file and any files in the R directory are sourced during `simInit()`;
-## all functions and objects are put into the `simList`.
-## To use objects, use `sim$xxx` (they are globally available to all modules).
-## Functions can be used inside any function that was sourced in this module;
-## they are namespaced to the module, just like functions in R packages.
-## If exact location is required, functions will be: `sim$.mods$<moduleName>$FunctionName`.
 defineModule(sim, list(
   name = "caribouNN",
-  description = "",
+  description = "Performs an experiment on models with different forecasting settings",
   keywords = "",
-  authors = structure(list(list(given = c("First", "Middle"), family = "Last", role = c("aut", "cre"), email = "email@example.com", comment = NULL)), class = "person"),
+  authors = structure(list(list(given = "Tati", family = "Micheletti", role = c("aut", "cre"), email = "tati.micheletti@gmail.com", comment = NULL)), class = "person"),
   childModules = character(0),
-  version = list(caribouNN = "0.0.0.9000"),
+  version = list(caribouNN = "0.0.1"),
   timeframe = as.POSIXlt(c(NA, NA)),
   timeunit = "year",
   citation = list("citation.bib"),
   documentation = list("NEWS.md", "README.md", "caribouNN.Rmd"),
-  reqdPkgs = list("SpaDES.core (>= 3.0.4)", "ggplot2"),
+  reqdPkgs = list("SpaDES.core (>= 3.0.4)", "ggplot2","data.table", "torch", "luz"),
   parameters = bindrows(
     #defineParameter("paramName", "paramClass", value, min, max, "parameter description"),
     defineParameter(".plots", "character", "screen", NA, NA,
@@ -35,15 +29,35 @@ defineModule(sim, list(
     defineParameter(".seed", "list", list(), NA, NA,
                     "Named list of seeds to use for each event (names)."),
     defineParameter(".useCache", "logical", FALSE, NA, NA,
-                    "Should caching of events or module be used?")
+                    "Should caching of events or module be used?"),
+    defineParameter("epoch", "numeric", 100, 10, 200, 
+                    "Epochs for the ranking model (keep low for speed)"),
+    defineParameter("batchSize", "numeric", 512, 32, 4096, 
+                    "Batch size"),
+    defineParameter("learningRate", "numeric", 0.01, 0.001, 0.1, 
+                    paste0("Learning rate. The smaller it is, the longer it takes, but the more",
+                           " precise to find the best parameters."))#,
+    # defineParameter("rerunPrepData", "logical", FALSE, NA, NA, 
+    #                 "Should the dataPrep be re-run?"),
+    defineParameter("rerunTraining", "logical", FALSE, NA, NA,
+                    "Should the training be re-run?")
   ),
   inputObjects = bindrows(
-    #expectsInput("objectName", "objectClass", "input object description", sourceURL, ...),
-    expectsInput(objectName = NA, objectClass = NA, desc = NA, sourceURL = NA)
+    expectsInput("featurePriority", "character", 
+                  "Ordered list of variable names based on importance"),
+    expectsInput("preparedDataFinal", "data.table", 
+                  paste0("Data table containing Dataset of raw ",
+                         "features after preparation (interactions added, etc.) ",
+                         "This is generally done by another module."))
   ),
   outputObjects = bindrows(
-    #createsOutput("objectName", "objectClass", "output object description", ...),
-    createsOutput(objectName = NA, objectClass = NA, desc = NA)
+    createsOutput(objectName = "experimentPlan", objectClass = "data.table", 
+                  desc = paste0("Data.table containing the experiment plan, including",
+                                " a column with the link to the folder with each model's",
+                                " results")),
+    createsOutput(objectName = "experimentDatasets", objectClass = "list", 
+                  desc = paste0("List of data.tables containing the specific datasets ",
+                                " for each experiment planned"))
   )
 ))
 
@@ -51,148 +65,60 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
   switch(
     eventType,
     init = {
-      ### check for more detailed object dependencies:
-      ### (use `checkObject` or similar)
-
-      # do stuff for this event
-      sim <- Init(sim)
-
+      
       # schedule future event(s)
-      sim <- scheduleEvent(sim, P(sim)$.plotInitialTime, "caribouNN", "plot")
-      sim <- scheduleEvent(sim, P(sim)$.saveInitialTime, "caribouNN", "save")
+      sim <- scheduleEvent(sim, time(sim), "caribouNN", "prepareExperiment")
+      sim <- scheduleEvent(sim, time(sim), "caribouNN", "trainExperiment")
+      sim <- scheduleEvent(sim, time(sim), "caribouNN", "predictExperiment")
+      sim <- scheduleEvent(sim, time(sim), "caribouNN", "compareExperiment")
+      sim <- scheduleEvent(sim, time(sim), "caribouNN", "analyseExperiment")
     },
-    plot = {
-      # ! ----- EDIT BELOW ----- ! #
-      # do stuff for this event
-
-      plotFun(sim) # example of a plotting function
-      # schedule future event(s)
-
-      # e.g.,
-      #sim <- scheduleEvent(sim, time(sim) + P(sim)$.plotInterval, "caribouNN", "plot")
-
-      # ! ----- STOP EDITING ----- ! #
+    prepareExperiment = {
+      
+      sim$experimentPlan <- generateExperimentPlan(startYear = 2008,
+                                                   endYear = 2022,
+                                                   numberOfCovariatesList = c(2, 5, 10, Inf),
+                                                   outputPath = file.path(outputPath(sim), 
+                                                                          paste0("experimentalDesign",
+                                                                                 format(Sys.Date(),
+                                                                                        "%d%b%y"),
+                                                                                 ".csv"))
+      # NOTE: in experimentPlan we need to swap 2008 for 2007 because we do not have data for 2008
+      print("Swap 2008 to 2007")
+      browser()
+      sim$experimentDatasets <- lapply(unique(experimentPlan$groupId), function(ID){
+        browser()
+      }) # Create a list with all datasets
+      # Train it, but check first if the given model exists --> save models using the 
+      # experiment_typeName
     },
-    save = {
-      # ! ----- EDIT BELOW ----- ! #
-      # do stuff for this event
-
-      # e.g., call your custom functions/methods here
-      # you can define your own methods below this `doEvent` function
-
-      # schedule future event(s)
-
-      # e.g.,
-      # sim <- scheduleEvent(sim, time(sim) + P(sim)$.saveInterval, "caribouNN", "save")
-
-      # ! ----- STOP EDITING ----- ! #
+    trainExperiment = {
+      
     },
-    event1 = {
-      # ! ----- EDIT BELOW ----- ! #
-      # do stuff for this event
-
-      # e.g., call your custom functions/methods here
-      # you can define your own methods below this `doEvent` function
-
-      # schedule future event(s)
-
-      # e.g.,
-      # sim <- scheduleEvent(sim, time(sim) + increment, "caribouNN", "templateEvent")
-
-      # ! ----- STOP EDITING ----- ! #
+    predictExperiment = {
+      
     },
-    event2 = {
-      # ! ----- EDIT BELOW ----- ! #
-      # do stuff for this event
-
-      # e.g., call your custom functions/methods here
-      # you can define your own methods below this `doEvent` function
-
-      # schedule future event(s)
-
-      # e.g.,
-      # sim <- scheduleEvent(sim, time(sim) + increment, "caribouNN", "templateEvent")
-
-      # ! ----- STOP EDITING ----- ! #
+    compareExperiment = {
+      
+    },
+    analyseExperiment = {
+      
     },
     warning(noEventWarning(sim))
   )
   return(invisible(sim))
 }
 
-### template initialization
-Init <- function(sim) {
-  # # ! ----- EDIT BELOW ----- ! #
-
-  # ! ----- STOP EDITING ----- ! #
-
-  return(invisible(sim))
-}
-### template for save events
-Save <- function(sim) {
-  # ! ----- EDIT BELOW ----- ! #
-  # do stuff for this event
-  sim <- saveFiles(sim)
-
-  # ! ----- STOP EDITING ----- ! #
-  return(invisible(sim))
-}
-
-### template for plot events
-plotFun <- function(sim) {
-  # ! ----- EDIT BELOW ----- ! #
-  # do stuff for this event
-  sampleData <- data.frame("TheSample" = sample(1:10, replace = TRUE))
-  Plots(sampleData, fn = ggplotFn) # needs ggplot2
-
-  # ! ----- STOP EDITING ----- ! #
-  return(invisible(sim))
-}
-
-### template for your event1
-Event1 <- function(sim) {
-  # ! ----- EDIT BELOW ----- ! #
-  # THE NEXT TWO LINES ARE FOR DUMMY UNIT TESTS; CHANGE OR DELETE THEM.
-  # sim$event1Test1 <- " this is test for event 1. " # for dummy unit test
-  # sim$event1Test2 <- 999 # for dummy unit test
-
-  # ! ----- STOP EDITING ----- ! #
-  return(invisible(sim))
-}
-
-### template for your event2
-Event2 <- function(sim) {
-  # ! ----- EDIT BELOW ----- ! #
-  # THE NEXT TWO LINES ARE FOR DUMMY UNIT TESTS; CHANGE OR DELETE THEM.
-  # sim$event2Test1 <- " this is test for event 2. " # for dummy unit test
-  # sim$event2Test2 <- 777  # for dummy unit test
-
-  # ! ----- STOP EDITING ----- ! #
-  return(invisible(sim))
-}
-
 .inputObjects <- function(sim) {
-  # Any code written here will be run during the simInit for the purpose of creating
-  # any objects required by this module and identified in the inputObjects element of defineModule.
-  # This is useful if there is something required before simulation to produce the module
-  # object dependencies, including such things as downloading default datasets, e.g.,
-  # downloadData("LCC2005", modulePath(sim)).
-  # Nothing should be created here that does not create a named object in inputObjects.
-  # Any other initiation procedures should be put in "init" eventType of the doEvent function.
-  # Note: the module developer can check if an object is 'suppliedElsewhere' to
-  # selectively skip unnecessary steps because the user has provided those inputObjects in the
-  # simInit call, or another module will supply or has supplied it. e.g.,
-  # if (!suppliedElsewhere('defaultColor', sim)) {
-  #   sim$map <- Cache(prepInputs, extractURL('map')) # download, extract, load file from url in sourceURL
-  # }
-
-  #cacheTags <- c(currentModule(sim), "function:.inputObjects") ## uncomment this if Cache is being used
+  
   dPath <- asPath(getOption("reproducible.destinationPath", dataPath(sim)), 1)
   message(currentModule(sim), ": using dataPath '", dPath, "'.")
-
-  # ! ----- EDIT BELOW ----- ! #
-
-  # ! ----- STOP EDITING ----- ! #
+  if (!suppliedElsewhere("preparedDataFinal", sim = sim)){
+    stop("No defaults have been implemented yet...Please run caribouNN_Gobal")
+  }
+  if (!suppliedElsewhere("featurePriority", sim = sim)){
+    sim$featurePriority <- fread("inputs/featureTable.csv")
+  }
   return(invisible(sim))
 }
 
