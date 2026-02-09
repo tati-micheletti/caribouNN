@@ -110,6 +110,5 @@ generateExperimentPlan <- function(startYear = 2008,
   cat(sprintf("Generated %d rows across %d complete triplet groups.\n", 
               nrow(experimentPlan), uniqueN(experimentPlan$groupId)))
   
-  fwrite(experimentPlan, outputPath)
   return(experimentPlan)
 }
