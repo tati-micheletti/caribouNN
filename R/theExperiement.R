@@ -1,19 +1,29 @@
 theExperiment <- function(preparedData,
-                           batchSize, epoch, learningRate,
-                           outputDir, experimentPlan,
-                          reRunModels, reRunDataset,
-                          featurePriority){
+                          batchSize, 
+                          epoch, 
+                          learningRate,
+                          outputDir, 
+                          experimentPlan,
+                          reRunModels, 
+                          reRunDataset,
+                          featurePriority,
+                          modComplex,
+                          maxClu,
+                          useFuture){
   
-  cors <- min(50, parallel::detectCores() - 2)
+  cors <- min(maxClu, parallel::detectCores() - 2)
   
-  if (Sys.getenv("RSTUDIO") != 1) {
+  if (all(Sys.getenv("RSTUDIO") != 1,
+          useFuture)) {
     print(paste0("Running outside of RStudio, using future multicore with ", 
                  cors,
                  " workers..."))
     plan("multicore", workers = cors)
   }
 
+  outputDir <- Require::normPath(outputDir)
   mapPath <- file.path(outputDir, "masterIdMap.csv")
+  
   if (any(!"idIndex" %in% names(preparedData),
           !file.exists(mapPath))) {
     message("Creating Master ID Map...")
@@ -21,6 +31,15 @@ theExperiment <- function(preparedData,
     # Save the map for auditing
     fwrite(unique(preparedData[, .(id, idIndex)]), 
            mapPath)
+  }
+  
+  # Here we check if we need to reduce the preparedData to 
+  # only the complexities we would like to run
+  if (modComplex != "all"){
+    print(paste0("Running models with ", modComplex," covariates"))
+    experimentPlanOK <- copy(experimentPlan[numberOfCovariates == modComplex,])
+  } else {
+    experimentPlanOK <- copy(experimentPlan)
   }
   
   # This returns a list of file paths for each year
@@ -31,46 +50,43 @@ theExperiment <- function(preparedData,
     reRunDataset = reRunDataset
   )
   
-  # This is what needs to be in a future_lappy
+  message("Setting threads for torch...")
+  torch::torch_set_num_threads(num_threads = 1)
+  torch::torch_set_num_interop_threads(num_threads = 1)
+
   t1 <- Sys.time()
-  fittedModels <- rbindlist(lapply( #future_lapply <~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ AFTER TEST CHANGE!!!!!
-    1:6, #1:NROW(experimentPlan), <~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ AFTER TEST CHANGE!!!!!
+  fittedModels <- rbindlist(future_lapply( #
+    1:NROW(experimentPlanOK),
     function(index) {
-      modelNaming <- paste0(experimentPlan[index, groupId], "_", 
-                            experimentPlan[index, typeValidation])
-      neededYears <- unique(c(experimentPlan[index, trainStartYear]:experimentPlan[index, trainEndYear], 
-                              experimentPlan[index, valStartYear]:experimentPlan[index, valEndYear], 
-                              experimentPlan[index, testStartYear]:experimentPlan[index, testEndYear]))
+      modelNaming <- paste0(experimentPlanOK[index, groupId], "_", 
+                            experimentPlanOK[index, typeValidation])
+      neededYears <- unique(c(experimentPlanOK[index, trainStartYear]:experimentPlanOK[index, trainEndYear], 
+                              experimentPlanOK[index, valStartYear]:experimentPlanOK[index, valEndYear], 
+                              experimentPlanOK[index, testStartYear]:experimentPlanOK[index, testEndYear]))
       weightsPath <- file.path(outputDir, paste0(modelNaming,"_BW.pt"))
       modelPath <- file.path(outputDir, paste0(modelNaming,"_Mod.pt"))
-      if (any(reRunModels,
-              !file.exists(weightsPath),
-              !file.exists(modelPath))){
-        if (reRunModels){
-          message("reRunModels is set to TRUE. Rerunning models...")
-        } else {
-          message(paste0(modelNaming, " doesn't exist. Fitting..."))
-        }
-        trainingExperimentNN(subsettedData = datasetYears, # Path to all years
+      availableKeys <- intersect(paste0("year_", as.character(neededYears)), names(datasetYears))
+      if(length(availableKeys) == 0) {
+        return(data.table(modelName = modelNaming, testLossMean = NA))
+      }
+      mds <- trainingExperimentNN(subsettedData = datasetYears, # Path to all years
                              neededYears = neededYears,
-                             experimentPlanRow = experimentPlan[index,],
+                             experimentPlanRow = experimentPlanOK[index,],
                              modelNaming = modelNaming,
                              batchSize = batchSize,
                              epoch = epoch,
                              featurePriority = featurePriority,
                              learningRate = learningRate,
                              weightsPath = weightsPath,
-                             modelPath = modelPath)
-      } else {
-        message(paste0("reRunModels is set to FALSE and model ", modelNaming," exists. Returning paths..."))
-      }
-      return(data.table(modelName = modelNaming,
-                        modelPath = modelPath,
-                        modelWeightPath = weightsPath))
-
-    }), use.names = TRUE)
+                             modelPath = modelPath,
+                             outputDir = outputDir,
+                             reRunExperiment = reRunModels)
+      gc()
+      return(mds)
+    }, future.seed = TRUE), #}), 
+    use.names = TRUE)
   plan("sequential")
   t2 <- Sys.time()
   print(t2 - t1)
-  
+  return(fittedModels)
 }

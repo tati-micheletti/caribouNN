@@ -2,7 +2,9 @@ defineModule(sim, list(
   name = "caribouNN",
   description = "Performs an experiment on models with different forecasting settings",
   keywords = "",
-  authors = structure(list(list(given = "Tati", family = "Micheletti", role = c("aut", "cre"), email = "tati.micheletti@gmail.com", comment = NULL)), class = "person"),
+  authors = structure(list(list(given = "Tati", family = "Micheletti", role = c("aut", "cre"), 
+                                email = "tati.micheletti@gmail.com", comment = NULL)), 
+                      class = "person"),
   childModules = character(0),
   version = list(caribouNN = "0.0.1"),
   timeframe = as.POSIXlt(c(NA, NA)),
@@ -48,7 +50,16 @@ defineModule(sim, list(
                     paste0("Should the package future be used for paralellizing?",
                           " Only worth it in large machines!")),
     defineParameter("useSavedPlan", "logical", TRUE, NA, NA,
-                    paste0("Should the module use a saved plan or recreate it?"))
+                    paste0("Should the module use a saved plan or recreate it?")),
+    defineParameter("modComplex", "character", "all", NA, NA,
+                    paste0("Which model complexity should the module run? Defaults to 'all', which",
+                           "means it will run all models. This was added to help paralellize more ",
+                           "quicky and have better control of the runs.")),
+    defineParameter("maxClu", "numeric", Inf, NA, NA,
+                    paste0("How many cores should we use at maximum?",
+                           "Deafults to all avaliable. NOTE: This may cause problems with C++ during ",
+                           "model fitting. Ideally, go about 10% less than the available number of ",
+                           "cores."))
   ),
   inputObjects = bindrows(
     expectsInput("featurePriority", "character", 
@@ -135,6 +146,12 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
         # 3. SAVE THE EXPERIMENT PLAN
         fwrite(sim$experimentPlan, experimentPlanPath)
       }
+      
+      if (!P(sim)$modComplex %in% c("all", sim$experimentPlan$numberOfCovariates)){
+        pt <- paste(c("all", unique(experimentPlan$numberOfCovariates)), collapse = ", ")
+        stop(paste0("modComplex = ", P(sim)$modComplex,". The only available values are: ", pt))
+      }
+      
      },
     trainExperiment = {
 
@@ -148,7 +165,10 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
                                                                create = TRUE),
                                          experimentPlan = sim$experimentPlan,
                                          reRunModels = P(sim)$reRunModels,
-                                         reRunDataset = P(sim)$reRunDataset)
+                                         reRunDataset = P(sim)$reRunDataset,
+                                         modComplex = P(sim)$modComplex,
+                                         maxClu = P(sim)$maxClu,
+                                         useFuture = P(sim)$useFuture)
     },
     predictExperiment = {
       
