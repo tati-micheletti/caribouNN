@@ -34,42 +34,6 @@ trainingExperimentNN <- function(subsettedData, # Path
       modelScalePath = NA_character_,
       rawLossPath = NA_character_,
       errorMessage = error_message
-trainingExperimentNN <- function(subsettedData, # Path
-                                 neededYears,
-                                 modelNaming,
-                                 batchSize, 
-                                 learningRate, 
-                                 epochs, 
-                                 experimentPlanRow,
-                                 featurePriority, 
-                                 weightsPath,
-                                 modelPath, 
-                                 outputDir, 
-                                 reRunExperiment){
-  
-  create_error_result <- function(experimentPlanRow, modelNaming, error_message) {
-    data.table(
-      groupId = experimentPlanRow$groupId,
-      typeValidation = experimentPlanRow$typeValidation,
-      modelName = modelNaming,
-      groupSeed = NA_integer_,
-      numberOfCovariates = experimentPlanRow$numberOfCovariates,
-      trainStartYear = experimentPlanRow$trainStartYear,
-      trainEndYear = experimentPlanRow$trainEndYear,
-      testStartYear = experimentPlanRow$testStartYear,
-      nTrain = experimentPlanRow$nTrainS,
-      nTest = experimentPlanRow$nTestS,
-      nVal = experimentPlanRow$nValS,
-      testLossMean = NA_real_,
-      testLossSD = NA_real_,
-      totalSamples = 0,
-      correctPreds = 0,
-      testAccuracy = NA_real_,
-      modelPath = NA_character_,
-      modelWeight = NA_character_,
-      modelScalePath = NA_character_,
-      rawLossPath = NA_character_,
-      errorMessage = error_message
     )
   }
   tryCatch({
@@ -413,12 +377,13 @@ if (nR %% 11 != 0)
     return(FALSE)
   })
   
-  all_individual_losses <- unlist(all_batch_losses)  # Single allocation at end
-  
   if (!eval_success) {
     return(create_error_result(experimentPlanRow, modelNaming, 
                                "Evaluation crashed"))
   }
+  
+  all_individual_losses <- unlist(all_batch_losses)  # Single allocation at end
+  
   correPredPath <- file.path(dirname(modelPath), paste0(modelNaming,"_correctPreds.rds"))
   saveRDS(correct_preds, correPredPath)
   totSampPath <- file.path(dirname(modelPath), paste0(modelNaming,"_totalSamps.rds"))
