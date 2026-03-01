@@ -34,6 +34,42 @@ trainingExperimentNN <- function(subsettedData, # Path
       modelScalePath = NA_character_,
       rawLossPath = NA_character_,
       errorMessage = error_message
+trainingExperimentNN <- function(subsettedData, # Path
+                                 neededYears,
+                                 modelNaming,
+                                 batchSize, 
+                                 learningRate, 
+                                 epochs, 
+                                 experimentPlanRow,
+                                 featurePriority, 
+                                 weightsPath,
+                                 modelPath, 
+                                 outputDir, 
+                                 reRunExperiment){
+  
+  create_error_result <- function(experimentPlanRow, modelNaming, error_message) {
+    data.table(
+      groupId = experimentPlanRow$groupId,
+      typeValidation = experimentPlanRow$typeValidation,
+      modelName = modelNaming,
+      groupSeed = NA_integer_,
+      numberOfCovariates = experimentPlanRow$numberOfCovariates,
+      trainStartYear = experimentPlanRow$trainStartYear,
+      trainEndYear = experimentPlanRow$trainEndYear,
+      testStartYear = experimentPlanRow$testStartYear,
+      nTrain = experimentPlanRow$nTrainS,
+      nTest = experimentPlanRow$nTestS,
+      nVal = experimentPlanRow$nValS,
+      testLossMean = NA_real_,
+      testLossSD = NA_real_,
+      totalSamples = 0,
+      correctPreds = 0,
+      testAccuracy = NA_real_,
+      modelPath = NA_character_,
+      modelWeight = NA_character_,
+      modelScalePath = NA_character_,
+      rawLossPath = NA_character_,
+      errorMessage = error_message
     )
   }
   tryCatch({
@@ -134,15 +170,6 @@ trainingExperimentNN <- function(subsettedData, # Path
   featureCandidates <- featurePriority$Feature[1:min(nPick, nrow(featurePriority))]
   
   scalingStats <- list()
-  # for (f in featureCandidates) {
-  #   mu <- mean(dTrain[[f]], na.rm = TRUE)
-  #   sigma <- sd(dTrain[[f]], na.rm = TRUE)
-  #   if (is.na(sigma) || sigma == 0) sigma <- 1
-  #   scalingStats[[f]] <- list(mean = mu, sd = sigma)
-  #   set(dTrain, j = f, value = (dTrain[[f]] - mu) / sigma)
-  #   set(dVal,   j = f, value = (dVal[[f]]   - mu) / sigma)
-  #   set(dTest,  j = f, value = (dTest[[f]]  - mu) / sigma)
-  # } # Commented out 
   scaling_result <- tryCatch({
     for (f in featureCandidates) {
       # Check if feature exists
@@ -183,30 +210,29 @@ trainingExperimentNN <- function(subsettedData, # Path
   # 2. DATASET, MODEL, & FIT (UPDATED TO MATCH GLOBAL)
   # ----------------------------------------------------------------------
   
-  # A. Correct Tensor Shaping (Bypassing the R indexing bug by stripping attributes)
-  # to_tensor <- function(dt_sub, feat_list) {
-  #   if(nrow(dt_sub) == 0) return(NULL)
-  #   m_clean <- matrix(as.numeric(as.matrix(dt_sub[, ..feat_list])), nrow = nrow(dt_sub))
-  #   nB <- nrow(m_clean) / 11
-  #   arr <- array(m_clean, dim = c(11, nB, length(feat_list)))
-  #   list(x = torch_tensor(aperm(arr, c(2, 1, 3)), dtype = torch_float()), 
-  #        id = torch_tensor(as.integer(dt_sub[case_ == TRUE, idIndex]), dtype = torch_long()))
-  # }
-  
+  # FIX 1: to_tensor builds array column-by-column to avoid creating a single
+  # giant matrix of nrow*ncols elements that can exceed R's 2^31 integer limit.
   to_tensor <- function(dt_sub, feat_list) {
     tryCatch({
       if(nrow(dt_sub) == 0) return(NULL)
       
-      m_clean <- matrix(as.numeric(as.matrix(dt_sub[, ..feat_list])), 
-                        nrow = nrow(dt_sub))
-      nB <- nrow(m_clean) / 11
+      nR <- nrow(dt_sub)
+if (nR %% 11 != 0)
+  stop("Rows not divisible by 11 — corrupted strata")
+      nB <- nR / 11
+      nF <- length(feat_list)
       
       if (nB < 1) {
         warning(paste0("Insufficient batches: ", nB))
         return(NULL)
       }
       
-      arr <- array(m_clean, dim = c(11, nB, length(feat_list)))
+      # Build 3D array feature-by-feature instead of one giant matrix all at once
+      arr <- array(0, dim = c(11, nB, nF))
+      for (fi in seq_along(feat_list)) {
+        arr[,,fi] <- as.numeric(dt_sub[[feat_list[fi]]])
+      }
+      
       list(
         x = torch_tensor(aperm(arr, c(2, 1, 3)), dtype = torch_float()), 
         id = torch_tensor(as.integer(dt_sub[case_ == TRUE, idIndex]), 
@@ -251,7 +277,8 @@ trainingExperimentNN <- function(subsettedData, # Path
   
   if (tTrain$x$size(1) == 0 || tVal$x$size(1) == 0 || tTest$x$size(1) == 0) {
     print(paste0("Empty tensor batches for: ", modelNaming))
-    return(create_error_result(..., "Empty tensor batches"))
+    return(create_error_result(experimentPlanRow,
+  modelNaming, "Empty tensor batches"))
   }
   
   # C. Model Definition (Matching Global EXACTLY)
@@ -264,15 +291,7 @@ trainingExperimentNN <- function(subsettedData, # Path
       self$out <- nn_linear(64, 1)
       self$act <- nn_selu()
     },
-    # forward = function(input) { # removed
-    #   x <- input$x
-    #   id <- input$id
-    #   emb <- self$idEmb(id)$unsqueeze(2)$expand(c(-1,x$shape[2],-1))
-    #   torch_cat(list(x,emb),3) %>% 
-    #     self$fc1() %>% self$act() %>% 
-    #     self$fc2() %>% self$act() %>% 
-    #     self$out() %>% torch_squeeze(3)
-    forward = function(input) { # included
+    forward = function(input) {
       x <- input$x
       id <- input$id
       
@@ -295,23 +314,10 @@ trainingExperimentNN <- function(subsettedData, # Path
   calc_loss_1indexed <- nn_cross_entropy_loss()
   
   loss_wrapper <- function(input, target) {
-    # nnf_cross_entropy(input, target$squeeze()) # removed
     calc_loss_1indexed(input, target$squeeze())
   }
   
   message("Fitting the model...") 
-  #TODO If more individuals are expected (i.e., more than 200 in total, need to update the code 
-  # below `nAnimals = 200`)
-  # fitted <- Net %>%
-  #   setup(loss = loss_wrapper, optimizer = optim_adam) %>%
-  #   set_hparams(nIn = length(featureCandidates), nAnimals = 200) %>% 
-  #   set_opt_hparams(lr = learningRate) %>%
-  #   fit(dataloader(ds(tTrain$x, tTrain$id), batch_size = batchSize, shuffle = TRUE),
-  #       epochs = epochs, 
-  #       valid_data = dataloader(ds(tVal$x, tVal$id), batch_size = batchSize),
-  #       callbacks = list(luz_callback_model_checkpoint(path = weightsPath, save_best_only = TRUE),
-  #                        luz_callback_lr_scheduler(lr_reduce_on_plateau, factor = 0.5, patience = 2)))
-  
   fitted <- tryCatch({
     Net %>%
       setup(loss = loss_wrapper, optimizer = optim_adam) %>%
@@ -352,15 +358,10 @@ trainingExperimentNN <- function(subsettedData, # Path
   ids_train <- unique(as.array(tTrain$id$cpu()))
   ids_test <- unique(as.array(tTest$id$cpu()))
   new_ids <- setdiff(ids_test, ids_train)
-  # if (length(new_ids) > 0) {
-  #   w <- fitted$model$idEmb$weight
-  #   avg_p <- w[ids_train, ]$mean(dim = 1)
-  #   with_no_grad({ for (idx in new_ids) w[idx, ]$copy_(avg_p) })
-  # }
   if (length(new_ids) > 0) {
     tryCatch({
       w <- fitted$model$idEmb$weight
-      avg_p <- w[ids_train, ]$mean(dim = 1)
+      avg_p <- w[ids_train, ]$mean(dim = 0)
       with_no_grad({ 
         for (idx in new_ids) {
           w[idx, ]$copy_(avg_p)
@@ -377,41 +378,29 @@ trainingExperimentNN <- function(subsettedData, # Path
   message(paste0("Starting model evaluation for ", modelNaming))
   fitted$model$eval()
   
-  # Use the same Dataset/Dataloader logic as training
-  test_dl <- dataloader(ds(tTest$x, tTest$id), batch_size = batchSize)
+  # FIX 2: dataloader construction wrapped in tryCatch with smaller batch size fallback
+  test_dl <- tryCatch({
+    dataloader(ds(tTest$x, tTest$id), batch_size = batchSize)
+  }, error = function(e) {
+    warning(paste0("Dataloader creation failed, trying smaller batch: ", e$message))
+    dataloader(ds(tTest$x, tTest$id), batch_size = max(1L, batchSize %/% 4L))
+  })
   
-  all_individual_losses <- c()
+  # FIX 3: Use list accumulation instead of c() to avoid long vector copies
+  all_batch_losses <- list()
+  batch_idx <- 0L
   correct_preds <- 0
   total_samples <- 0
   
-  # with_no_grad({
-  #   coro::loop(for (b in test_dl) {
-  #     scores <- fitted$model(b[[1]])
-  #     
-  #     # target_0indexed <- torch_zeros(scores$size(1), dtype = torch_long()) # included removed
-  #     target_1indexed <- torch_ones(scores$size(1), dtype = torch_long())
-  #     # loss_vector <- nnf_cross_entropy(scores, target_1indexed, reduction = "none") # removed
-  #     # loss_vector <- nnf_cross_entropy(scores, target_0indexed, reduction = "none")  # included removed
-  #     # loss_vector <- nnf_cross_entropy(scores, b[[2]]$squeeze(), reduction = "none") # removed
-  #     loss_val <- calc_loss_1indexed(scores, target_1indexed) # included
-  #     all_individual_losses <- c(all_individual_losses, as.numeric(loss_val$cpu()))
-  #     
-  #     preds <- torch_argmax(scores, dim = 2) # included
-  #     # preds <- torch_argmax(scores, dim = 2) + 1L # removed
-  #     
-  #     correct_preds <- correct_preds + as.numeric((preds == 1L)$sum()$cpu()) # removed included
-  #     # correct_preds <- correct_preds + as.numeric((preds == 0L)$sum()$cpu()) # included removed
-  #     total_samples <- total_samples + scores$size(1)
-  #   })
-  # })
   eval_success <- tryCatch({
     with_no_grad({
       coro::loop(for (b in test_dl) {
         scores <- fitted$model(b[[1]])
         target_1indexed <- torch_ones(scores$size(1), dtype = torch_long())
         loss_val <- calc_loss_1indexed(scores, target_1indexed)
-        all_individual_losses <- c(all_individual_losses, 
-                                   as.numeric(loss_val$cpu()))
+        
+        batch_idx <- batch_idx + 1L
+        all_batch_losses[[batch_idx]] <- as.numeric(loss_val$cpu())
         
         preds <- torch_argmax(scores, dim = 2)
         correct_preds <- correct_preds + as.numeric((preds == 1L)$sum()$cpu())
@@ -423,6 +412,9 @@ trainingExperimentNN <- function(subsettedData, # Path
     warning(paste0("EVALUATION FAILED for ", modelNaming, ": ", e$message))
     return(FALSE)
   })
+  
+  all_individual_losses <- unlist(all_batch_losses)  # Single allocation at end
+  
   if (!eval_success) {
     return(create_error_result(experimentPlanRow, modelNaming, 
                                "Evaluation crashed"))
@@ -460,7 +452,7 @@ trainingExperimentNN <- function(subsettedData, # Path
     testLossSD = sd(all_individual_losses),
     totalSamples = total_samples,
     correctPreds = correct_preds,
-    testAccuracy = correct_preds / total_samples, # Explicitly named
+    testAccuracy = correct_preds / total_samples,
     
     # Paths for Auditing
     modelPath = modelPath,
