@@ -10,7 +10,7 @@ trainingExperimentNN <- function(subsettedData, # Path
                                  modelPath, 
                                  outputDir, 
                                  reRunExperiment){
-  
+
   create_error_result <- function(experimentPlanRow, modelNaming, error_message) {
     data.table(
       groupId = experimentPlanRow$groupId,
@@ -207,7 +207,7 @@ if (nR %% 11 != 0)
       return(NULL)
     })
   }
-  
+
   tTrain <- to_tensor(dTrain, featureCandidates)
   tVal   <- to_tensor(dVal,   featureCandidates)
   tTest  <- to_tensor(dTest,  featureCandidates)
@@ -360,14 +360,18 @@ if (nR %% 11 != 0)
     with_no_grad({
       coro::loop(for (b in test_dl) {
         scores <- fitted$model(b[[1]])
+        
         target_1indexed <- torch_ones(scores$size(1), dtype = torch_long())
         loss_val <- calc_loss_1indexed(scores, target_1indexed)
         
         batch_idx <- batch_idx + 1L
-        all_batch_losses[[batch_idx]] <- as.numeric(loss_val$cpu())
-        
-        preds <- torch_argmax(scores, dim = 2)
-        correct_preds <- correct_preds + as.numeric((preds == 1L)$sum()$cpu())
+        # all_batch_losses[[batch_idx]] <- as.numeric(loss_val$cpu()) # New likely causes long vector problem.
+        all_batch_losses[[batch_idx]] <- loss_val$item() 
+
+        # preds <- torch_argmax(scores, dim = 2)
+        # correct_preds <- correct_preds + as.numeric((preds == 1L)$sum()$cpu()) # Likely causes long vector problem. [UPDATE] Not really, error still happening.
+        correct_preds <- correct_preds + 
+          as.numeric(torch_sum(torch_eq(torch_argmax(scores, dim = 2), 1L))$item())
         total_samples <- total_samples + scores$size(1)
       })
     })
@@ -377,6 +381,8 @@ if (nR %% 11 != 0)
     return(FALSE)
   })
   
+  print(paste0("EVALUATION SUCESSFUL for ", modelNaming))
+  
   if (!eval_success) {
     return(create_error_result(experimentPlanRow, modelNaming, 
                                "Evaluation crashed"))
@@ -384,17 +390,41 @@ if (nR %% 11 != 0)
   
   all_individual_losses <- unlist(all_batch_losses)  # Single allocation at end
   
+  # print(paste0("UNLISTING SUCESSFUL for ", modelNaming))
+  
   correPredPath <- file.path(dirname(modelPath), paste0(modelNaming,"_correctPreds.rds"))
   saveRDS(correct_preds, correPredPath)
   totSampPath <- file.path(dirname(modelPath), paste0(modelNaming,"_totalSamps.rds"))
   saveRDS(total_samples, totSampPath)
   
+  # print(paste0("SAVING SUCESSFUL for ", modelNaming))
+  
   # ----------------------------------------------------------------------
   # 5. PERSISTENCE
   # ----------------------------------------------------------------------
-  luz_save(fitted, modelPath)
+  tryCatch({
+    luz_save(fitted, modelPath)
+  }, error = function(e){
+    warning(paste0("Saving of full model object using luz failed. Resorting to saving with torch."), immediate. = TRUE)
+    torch_save(fitted$model$state_dict(), modelPath)
+    torch_save(fitted$optim$state_dict(),
+               file.path(outputDir, paste0(modelNaming, "_optim.pt")))
+    saveRDS(list(
+      nIn = length(featureCandidates),
+      nAnimals = 200,
+      learningRate = learningRate,
+      batchSize = batchSize,
+      epochs = epochs
+    ),
+    file.path(outputDir, paste0(modelNaming, "_config.rds")))
+    print(paste0("ALTERNATIVE SAVING SUCESSFUL for ", modelNaming))
+  })
+  
   rawLossPath <- file.path(dirname(modelPath), paste0(modelNaming,"_rawLosses.rds"))
+  # print(paste0("LOADING RAW LOSSES SUCCESSFUL for ", modelNaming))
+  
   saveRDS(all_individual_losses, rawLossPath)
+  print(paste0("SAVING RAW LOSSES SUCESSFUL for ", modelNaming))
   
   # Saving the final results
   finalDT <- data.table(
@@ -425,8 +455,11 @@ if (nR %% 11 != 0)
     modelScalePath = modelScalePath,
     rawLossPath = rawLossPath
   )
-
+  print(paste0("CREATING FINAL TABLE SUCESSFUL for ", modelNaming))
+  
   write.csv(finalDT, finalDTPath)
+  print(paste0("WRITING FINAL TABLE SUCESSFUL for ", modelNaming))
+  
   
   } else {
     message(paste0("Model ", modelNaming," exists and reRunModels = FALSE. Loading results..."))
