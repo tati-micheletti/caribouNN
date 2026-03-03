@@ -55,12 +55,8 @@ theExperiment <- function(preparedData,
   torch::torch_set_num_interop_threads(num_threads = 1)
 
   t1 <- Sys.time()
-  
-  # print(paste0("Run only for Grp_2_2008_2009_2020_Internal. If same memory problem, start to detect by "))
-  # browser()
-  # experimentPlanOK <- experimentPlanOK[groupId == "Grp_2_2008_2009_2020" & typeValidation == "Internal",] # REMOVE!!!
-  
-  fittedModels <- rbindlist(future_lapply( #
+  # fittedModels <- rbindlist(lapply(          #<~~~~~~~~~~~~~~~~~~~ CHOOSE THIS TO DEBUG
+  fittedModels <- rbindlist(future_lapply( #<~~~~~~~~~~~~~~~~~~~ CHOOSE THIS FOR PRODUCTION
     1:NROW(experimentPlanOK),
     function(index) {
       modelNaming <- paste0(experimentPlanOK[index, groupId], "_", 
@@ -88,7 +84,8 @@ theExperiment <- function(preparedData,
                              reRunExperiment = reRunModels)
       gc()
       return(mds)
-      }, future.seed = TRUE),#}), 
+    }, future.seed = TRUE), #<~~~~~~~~~~~~~~~~~~~ CHOOSE THIS FOR PRODUCTION
+    # }),                       #<~~~~~~~~~~~~~~~~~~~ CHOOSE THIS TO DEBUG
     use.names = TRUE)
   plan("sequential")
   t2 <- Sys.time()

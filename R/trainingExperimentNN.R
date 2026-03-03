@@ -340,8 +340,7 @@ if (nR %% 11 != 0)
   # 4. EVALUATION
   # ----------------------------------------------------------------------
   message(paste0("Starting model evaluation for ", modelNaming))
-  fitted$model$eval()
-  
+
   # FIX 2: dataloader construction wrapped in tryCatch with smaller batch size fallback
   test_dl <- tryCatch({
     dataloader(ds(tTest$x, tTest$id), batch_size = batchSize)
@@ -356,6 +355,7 @@ if (nR %% 11 != 0)
   correct_preds <- 0
   total_samples <- 0
   
+  print("STARTING EVAL LOOP...")
   eval_success <- tryCatch({
     with_no_grad({
       coro::loop(for (b in test_dl) {
@@ -381,7 +381,7 @@ if (nR %% 11 != 0)
     return(FALSE)
   })
   
-  print(paste0("EVALUATION SUCESSFUL for ", modelNaming))
+  print(paste0("EVALUATION SUCCESSFUL for ", modelNaming))
   
   if (!eval_success) {
     return(create_error_result(experimentPlanRow, modelNaming, 
@@ -390,14 +390,14 @@ if (nR %% 11 != 0)
   
   all_individual_losses <- unlist(all_batch_losses)  # Single allocation at end
   
-  # print(paste0("UNLISTING SUCESSFUL for ", modelNaming))
+  # print(paste0("UNLISTING SUCCESSFUL for ", modelNaming))
   
   correPredPath <- file.path(dirname(modelPath), paste0(modelNaming,"_correctPreds.rds"))
   saveRDS(correct_preds, correPredPath)
   totSampPath <- file.path(dirname(modelPath), paste0(modelNaming,"_totalSamps.rds"))
   saveRDS(total_samples, totSampPath)
   
-  # print(paste0("SAVING SUCESSFUL for ", modelNaming))
+  # print(paste0("SAVING SUCCESSFUL for ", modelNaming))
   
   # ----------------------------------------------------------------------
   # 5. PERSISTENCE
@@ -407,8 +407,8 @@ if (nR %% 11 != 0)
   }, error = function(e){
     warning(paste0("Saving of full model object using luz failed. Resorting to saving with torch."), immediate. = TRUE)
     torch_save(fitted$model$state_dict(), modelPath)
-    torch_save(fitted$optim$state_dict(),
-               file.path(outputDir, paste0(modelNaming, "_optim.pt")))
+    # torch_save(fitted$optim$state_dict(),
+    #            file.path(outputDir, paste0(modelNaming, "_optim.pt"))) # Fails, and not necessary
     saveRDS(list(
       nIn = length(featureCandidates),
       nAnimals = 200,
@@ -417,14 +417,14 @@ if (nR %% 11 != 0)
       epochs = epochs
     ),
     file.path(outputDir, paste0(modelNaming, "_config.rds")))
-    print(paste0("ALTERNATIVE SAVING SUCESSFUL for ", modelNaming))
+    print(paste0("ALTERNATIVE SAVING SUCCESSFUL for ", modelNaming))
   })
   
   rawLossPath <- file.path(dirname(modelPath), paste0(modelNaming,"_rawLosses.rds"))
   # print(paste0("LOADING RAW LOSSES SUCCESSFUL for ", modelNaming))
   
   saveRDS(all_individual_losses, rawLossPath)
-  print(paste0("SAVING RAW LOSSES SUCESSFUL for ", modelNaming))
+  print(paste0("SAVING RAW LOSSES SUCCESSFUL for ", modelNaming))
   
   # Saving the final results
   finalDT <- data.table(
@@ -455,10 +455,10 @@ if (nR %% 11 != 0)
     modelScalePath = modelScalePath,
     rawLossPath = rawLossPath
   )
-  print(paste0("CREATING FINAL TABLE SUCESSFUL for ", modelNaming))
+  print(paste0("CREATING FINAL TABLE SUCCESSFUL for ", modelNaming))
   
   write.csv(finalDT, finalDTPath)
-  print(paste0("WRITING FINAL TABLE SUCESSFUL for ", modelNaming))
+  print(paste0("WRITING FINAL TABLE SUCCESSFUL for ", modelNaming))
   
   
   } else {
