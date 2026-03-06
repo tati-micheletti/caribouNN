@@ -9,7 +9,8 @@ trainingExperimentNN <- function(subsettedData, # Path
                                  weightsPath,
                                  modelPath, 
                                  outputDir, 
-                                 reRunExperiment){
+                                 reRunExperiment,
+                                 device = "cpu"){
 
   create_error_result <- function(experimentPlanRow, modelNaming, error_message) {
     data.table(
@@ -211,6 +212,12 @@ if (nR %% 11 != 0)
   tTrain <- to_tensor(dTrain, featureCandidates)
   tVal   <- to_tensor(dVal,   featureCandidates)
   tTest  <- to_tensor(dTest,  featureCandidates)
+
+    if (device == "cuda") {
+  tTrain <- list(x = tTrain$x$to(device = device), id = tTrain$id$to(device = device))
+  tVal   <- list(x = tVal$x$to(device = device),   id = tVal$id$to(device = device))
+  tTest  <- list(x = tTest$x$to(device = device),  id = tTest$id$to(device = device))
+}
   
   if (any(is.null(tTrain), is.null(tVal), is.null(tTest))) {
     return(create_error_result(experimentPlanRow, modelNaming, "Tensor creation failed"))
@@ -275,7 +282,11 @@ if (nR %% 11 != 0)
   )
   
   # D. Fit with Loss Wrapper (Matching Global)
-  calc_loss_1indexed <- nn_cross_entropy_loss()
+  if (device == "cuda"){
+    calc_loss_1indexed <- nn_cross_entropy_loss()
+  } else {
+       calc_loss_1indexed <- nn_cross_entropy_loss()$to(device = device) 
+  }
   
   loss_wrapper <- function(input, target) {
     calc_loss_1indexed(input, target$squeeze())
@@ -361,7 +372,12 @@ if (nR %% 11 != 0)
       coro::loop(for (b in test_dl) {
         scores <- fitted$model(b[[1]])
         
-        target_1indexed <- torch_ones(scores$size(1), dtype = torch_long())
+        if (device == "cuda"){
+                target_1indexed <- torch_ones(scores$size(1), dtype = torch_long())$to(device = device)  
+        } else {
+                 target_1indexed <- torch_ones(scores$size(1), dtype = torch_long()) 
+        }
+        
         loss_val <- calc_loss_1indexed(scores, target_1indexed)
         
         batch_idx <- batch_idx + 1L
