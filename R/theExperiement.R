@@ -11,7 +11,7 @@ theExperiment <- function(preparedData,
                           maxClu,
                           useFuture,
                           useGPU = FALSE){
-
+browser()
 device <- if (isTRUE(useGPU) && torch::cuda_is_available()) "cuda" else "cpu"
 message("Using device: ", device)
   cors <- min(maxClu, parallel::detectCores() - 2)
