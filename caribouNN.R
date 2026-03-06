@@ -59,7 +59,10 @@ defineModule(sim, list(
                     paste0("How many cores should we use at maximum?",
                            "Deafults to all avaliable. NOTE: This may cause problems with C++ during ",
                            "model fitting. Ideally, go about 10% less than the available number of ",
-                           "cores."))
+                           "cores.")),
+    defineParameter("device", "character", "CPU", NA, NA,
+                    paste0("Using a normal machine?",
+                           "Deafults to CPU. Using a GPU, change it to 'GPU'"))
   ),
   inputObjects = bindrows(
     expectsInput("featurePriority", "character", 
@@ -168,7 +171,8 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
                                          reRunDataset = P(sim)$reRunDataset,
                                          modComplex = P(sim)$modComplex,
                                          maxClu = P(sim)$maxClu,
-                                         useFuture = P(sim)$useFuture)
+                                         useFuture = P(sim)$useFuture,
+                                         device = P(sim)$device)
     },
     predictExperiment = {
       
