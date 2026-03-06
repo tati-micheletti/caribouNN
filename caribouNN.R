@@ -172,7 +172,7 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
                                          modComplex = P(sim)$modComplex,
                                          maxClu = P(sim)$maxClu,
                                          useFuture = P(sim)$useFuture,
-                                         useGPU = P(sim)$device)
+                                         useGPU = P(sim)$useGPU)
     },
     predictExperiment = {
       
