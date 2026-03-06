@@ -9,12 +9,16 @@ theExperiment <- function(preparedData,
                           featurePriority,
                           modComplex,
                           maxClu,
-                          useFuture){
-  
+                          useFuture,
+                          useGPU = FALSE){
+
+device <- if (useGPU && torch::cuda_is_available()) "cuda" else "cpu"
+message("Using device: ", device)
   cors <- min(maxClu, parallel::detectCores() - 2)
   
   if (all(Sys.getenv("RSTUDIO") != 1,
-          useFuture)) {
+          useFuture,
+        device == "cpu")) {
     print(paste0("Running outside of RStudio, using future multicore with ", 
                  cors,
                  " workers..."))
@@ -51,14 +55,22 @@ theExperiment <- function(preparedData,
   )
   
   message("Setting threads for torch...")
+if (device == "cuda") {
+  torch::torch_set_num_threads(num_threads = 4)
+  torch::torch_set_num_interop_threads(num_threads = 4)
+} else {
   torch::torch_set_num_threads(num_threads = 1)
   torch::torch_set_num_interop_threads(num_threads = 1)
-
+}
   t1 <- Sys.time()
+  applyFn <- if (device == "cuda") lapply else future_lapply
+  extraArgs <- if (device == "cuda") list() else list(future.seed = TRUE)
   # fittedModels <- rbindlist(lapply(          #<~~~~~~~~~~~~~~~~~~~ CHOOSE THIS TO DEBUG
-  fittedModels <- rbindlist(future_lapply( #<~~~~~~~~~~~~~~~~~~~ CHOOSE THIS FOR PRODUCTION
-    1:NROW(experimentPlanOK),
-    function(index) {
+  fittedModels <- rbindlist(
+  do.call(applyFn, c(
+    list(
+      X = 1:NROW(experimentPlanOK),
+      FUN = function(index) {
       modelNaming <- paste0(experimentPlanOK[index, groupId], "_", 
                             experimentPlanOK[index, typeValidation])
       neededYears <- unique(c(experimentPlanOK[index, trainStartYear]:experimentPlanOK[index, trainEndYear], 
@@ -81,12 +93,14 @@ theExperiment <- function(preparedData,
                              weightsPath = weightsPath,
                              modelPath = modelPath,
                              outputDir = outputDir,
-                             reRunExperiment = reRunModels)
+                             reRunExperiment = reRunModels,
+                             device = device)
       gc()
       return(mds)
-    }, future.seed = TRUE), #<~~~~~~~~~~~~~~~~~~~ CHOOSE THIS FOR PRODUCTION
-    # }),                       #<~~~~~~~~~~~~~~~~~~~ CHOOSE THIS TO DEBUG
-    use.names = TRUE)
+}),
+    extraArgs
+  )),
+  use.names = TRUE)
   plan("sequential")
   t2 <- Sys.time()
   print(t2 - t1)
