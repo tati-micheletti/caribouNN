@@ -56,16 +56,14 @@ message("Using device: ", device)
   
   message("Setting threads for torch...")
 if (device == "cuda") {
-  torch::torch_set_num_threads(num_threads = 4)
-  torch::torch_set_num_interop_threads(num_threads = 4)
+gpu_threads <- max(1, parallel::detectCores() - 4)
+  torch::torch_set_num_threads(num_threads = gpu_threads)
 } else {
   torch::torch_set_num_threads(num_threads = 1)
-  torch::torch_set_num_interop_threads(num_threads = 1)
 }
   t1 <- Sys.time()
   applyFn <- if (device == "cuda") lapply else future_lapply
   extraArgs <- if (device == "cuda") list() else list(future.seed = TRUE)
-  # fittedModels <- rbindlist(lapply(          #<~~~~~~~~~~~~~~~~~~~ CHOOSE THIS TO DEBUG
   fittedModels <- rbindlist(
   do.call(applyFn, c(
     list(
