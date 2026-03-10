@@ -16,20 +16,21 @@ device <- if (isTRUE(useGPU) && torch::cuda_is_available()) "cuda" else "cpu"
 message("Using device: ", device)
   cors <- min(maxClu, parallel::detectCores() - 2)
   
+if (all(Sys.getenv("RSTUDIO") != 1,
+        useFuture, device == "cpu")) {
+  print(paste0("Running outside of RStudio, using future multicore with ", 
+               cors,
+               " workers..."))
+  plan("multicore", workers = cors)
+} else {
   if (all(Sys.getenv("RSTUDIO") != 1,
-          useFuture, device == "cpu")) {
-    print(paste0("Running outside of RStudio, using future multicore with ", 
-                 cors,
-                 " workers..."))
-    plan("multicore", workers = cors)
-  } else {
-    (all(Sys.getenv("RSTUDIO") != 1,
-          useFuture, device == "cuda")) {
+       useFuture, device == "cuda")) {
     print(paste0("Running outside of RStudio on GPU, using future multisession with ", 
                  cors,
                  " workers..."))
     plan("multisession", workers = cors)
-    }
+  }
+}
 
   outputDir <- Require::normPath(outputDir)
   mapPath <- file.path(outputDir, "masterIdMap.csv")
