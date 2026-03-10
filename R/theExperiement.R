@@ -62,8 +62,8 @@ gpu_threads <- max(1, parallel::detectCores() - 4)
   torch::torch_set_num_threads(num_threads = 1)
 }
   t1 <- Sys.time()
-  applyFn <- if (device == "cuda") lapply else future_lapply
-  extraArgs <- if (device == "cuda") list() else list(future.seed = TRUE)
+  applyFn <- if (useFuture) future_lapply else lapply
+  extraArgs <- if (useFuture) list(future.seed = TRUE) else list()
   fittedModels <- rbindlist(
   do.call(applyFn, c(
     list(
