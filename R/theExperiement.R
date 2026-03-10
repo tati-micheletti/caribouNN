@@ -17,7 +17,7 @@ message("Using device: ", device)
   cors <- min(maxClu, parallel::detectCores() - 2)
   
   if (all(Sys.getenv("RSTUDIO") != 1,
-          useFuture) {
+          useFuture)) {
     print(paste0("Running outside of RStudio, using future multicore with ", 
                  cors,
                  " workers..."))
