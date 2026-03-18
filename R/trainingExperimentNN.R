@@ -293,14 +293,17 @@ if (nR %% 11 != 0)
   }
   
   message("Fitting the model...") 
-  fitted <- tryCatch({
+if (device == "cuda") {
+  tryCatch(torch_cuda_empty_cache(), error = function(e) NULL)
+} 
+ fitted <- tryCatch({
     Net %>%
       setup(loss = loss_wrapper, optimizer = optim_adam) %>%
       set_hparams(nIn = length(featureCandidates), nAnimals = 200) %>% 
       set_opt_hparams(lr = learningRate) %>%
       fit(dataloader(ds(tTrain$x, tTrain$id), batch_size = batchSize, shuffle = TRUE),
           epochs = epochs, 
-          valid_data = dataloader(ds(tVal$x, tVal$id), batch_size = batchSize),
+          valid_data = dataloader(ds(tVal$x, tVal$id), batch_size = batchSize, drop_last = TRUE),
           callbacks = list(
             luz_callback_model_checkpoint(path = weightsPath, save_best_only = TRUE),
             luz_callback_lr_scheduler(lr_reduce_on_plateau, factor = 0.5, patience = 2)
