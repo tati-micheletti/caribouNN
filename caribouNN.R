@@ -12,7 +12,7 @@ defineModule(sim, list(
   citation = list("citation.bib"),
   documentation = list("NEWS.md", "README.md", "caribouNN.Rmd"),
   reqdPkgs = list("SpaDES.core (>= 3.0.4)", "ggplot2","data.table", "torch", "luz", 
-                  "future", "future.apply"),
+                  "future", "future.apply", "gridExtra", "ggridges", "scales"),
   parameters = bindrows(
     #defineParameter("paramName", "paramClass", value, min, max, "parameter description"),
     defineParameter(".plots", "character", "screen", NA, NA,
@@ -62,7 +62,12 @@ defineModule(sim, list(
                            "cores.")),
     defineParameter("useGPU", "logical", FALSE, NA, NA,
                     paste0("Using a normal machine?",
-                           "Deafults to FALSE, which uses CPU. Using a GPU, change it to 'TRUE'"))
+                           "Deafults to FALSE, which uses CPU. Using a GPU, change it to 'TRUE'")),
+    defineParameter("checkSavedModels", "logical", TRUE, NA, NA,
+                    paste0("Should the module check for saved fitted models?",
+                           "Deafults to TRUE, which uses any saved model table. IMPORTANT: ",
+                           "All model files (with the exception of '*_Mod.pt' should be available in ",
+                           "the directory where the table files are pointing to."))
   ),
   inputObjects = bindrows(
     expectsInput("featurePriority", "character", 
@@ -83,7 +88,10 @@ defineModule(sim, list(
                  paste0("Data table containing Dataset of raw ",
                         "features after preparation (interactions added, etc.) ",
                         "This is generally done by another module and copied here.",
-                        "This should be restructured at some point to improve modularity."))
+                        "This should be restructured at some point to improve modularity.")),
+    createsOutput(objectName = "modelComparisons", objectClass = "list", 
+                  desc = paste0("Named list of model comparisons.",
+                                "TO BE DECIDED HOW SPECIFIC!")) # <~~~~~~~~~~~~~~~~~~~~~ DOCUMENT WHEN READY!
   )
 ))
 
@@ -95,7 +103,6 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
       # schedule future event(s)
       sim <- scheduleEvent(sim, time(sim), "caribouNN", "prepareExperiment")
       sim <- scheduleEvent(sim, time(sim), "caribouNN", "trainExperiment")
-      sim <- scheduleEvent(sim, time(sim), "caribouNN", "predictExperiment")
       sim <- scheduleEvent(sim, time(sim), "caribouNN", "compareExperiment")
       sim <- scheduleEvent(sim, time(sim), "caribouNN", "analyseExperiment")
     },
@@ -157,27 +164,38 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
       
      },
     trainExperiment = {
-
-      sim$fittedModelsPaths <- theExperiment(preparedData = sim$preparedDataFinal, 
-                                         batchSize = P(sim)$batchSize,
-                                         epoch = P(sim)$epoch,
-                                         featurePriority = sim$featurePriority,
-                                         learningRate =  P(sim)$learningRate,
-                                         outputDir = checkPath(file.path(outputPath(sim), 
-                                                                         "testedModels"), 
-                                                               create = TRUE),
-                                         experimentPlan = sim$experimentPlan,
-                                         reRunModels = P(sim)$reRunModels,
-                                         reRunDataset = P(sim)$reRunDataset,
-                                         modComplex = P(sim)$modComplex,
-                                         maxClu = P(sim)$maxClu,
-                                         useFuture = P(sim)$useFuture,
-                                         useGPU = P(sim)$useGPU)
-    },
-    predictExperiment = {
-      
+      savedModelsPath <- file.path(outputPath(sim), "fittedModelPaths.csv")
+      if (P(sim)$checkSavedModels){
+        if (file.exists(savedModelsPath)){
+          message("Final model path's table found and loading...")
+          sim$fittedModelsPaths <- fread(savedModelsPath)  
+        }
+      } else {
+        message("Final model path's table NOT found or needs overriding. Starting model experiment.")
+        sim$fittedModelsPaths <- theExperiment(preparedData = sim$preparedDataFinal, 
+                                               batchSize = P(sim)$batchSize,
+                                               epoch = P(sim)$epoch,
+                                               featurePriority = sim$featurePriority,
+                                               learningRate =  P(sim)$learningRate,
+                                               outputDir = checkPath(file.path(outputPath(sim), 
+                                                                               "testedModels"), 
+                                                                     create = TRUE),
+                                               experimentPlan = sim$experimentPlan,
+                                               reRunModels = P(sim)$reRunModels,
+                                               reRunDataset = P(sim)$reRunDataset,
+                                               modComplex = P(sim)$modComplex,
+                                               maxClu = P(sim)$maxClu,
+                                               useFuture = P(sim)$useFuture,
+                                               useGPU = P(sim)$useGPU)
+        fwrite(sim$fittedModelsPaths, savedModelsPath)
+      }
     },
     compareExperiment = {
+      
+      sim$modelComparisons <- plotModels(fittedTable = sim$fittedModelsPaths, 
+                                         maxClu = P(sim)$maxClu,
+                                         useFuture = P(sim)$useFuture,
+                                         outPath = outputPath(sim))
       
     },
     analyseExperiment = {
