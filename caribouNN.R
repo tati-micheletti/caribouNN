@@ -12,7 +12,7 @@ defineModule(sim, list(
   citation = list("citation.bib"),
   documentation = list("NEWS.md", "README.md", "caribouNN.Rmd"),
   reqdPkgs = list("SpaDES.core (>= 3.0.4)", "ggplot2","data.table", "torch", "luz", 
-                  "future", "future.apply", "gridExtra", "ggridges", "scales"),
+                  "future", "future.apply", "gridExtra", "ggridges", "scales", "ggrepel"),
   parameters = bindrows(
     #defineParameter("paramName", "paramClass", value, min, max, "parameter description"),
     defineParameter(".plots", "character", "screen", NA, NA,
@@ -104,7 +104,6 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
       sim <- scheduleEvent(sim, time(sim), "caribouNN", "prepareExperiment")
       sim <- scheduleEvent(sim, time(sim), "caribouNN", "trainExperiment")
       sim <- scheduleEvent(sim, time(sim), "caribouNN", "compareExperiment")
-      sim <- scheduleEvent(sim, time(sim), "caribouNN", "analyseExperiment")
     },
     prepareExperiment = {
       
@@ -193,12 +192,7 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
     compareExperiment = {
       
       sim$modelComparisons <- plotModels(fittedTable = sim$fittedModelsPaths, 
-                                         maxClu = P(sim)$maxClu,
-                                         useFuture = P(sim)$useFuture,
                                          outPath = outputPath(sim))
-      
-    },
-    analyseExperiment = {
       
     },
     warning(noEventWarning(sim))

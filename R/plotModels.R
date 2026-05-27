@@ -1,67 +1,69 @@
-# EXAMPLE CODE FOR COMPARISON...
-plotModels <- function(fittedTable, maxClu, useFuture, outPath){
-  # I decided to remove any 2007/2008 models because of the 
-  # assumption of 2007 being exactly like 2008. I don't think
-  # I can live with that 
-  fittedTable <- fittedTable[trainStartYear != 2007]
-  # Fixing to the correct value
-  fittedTable[numberOfCovariates == Inf,  numberOfCovariates := 30]
-  # Add Training Window Length (Inclusive counting: e.g., 2009-2011 is 3 years)
-  fittedTable[, trainingWindowLength := (trainEndYear - trainStartYear + 1)]
-  
-  # # Fixing wrong naming convention
-  # NOT USED BECAUSE I AM NOT USING THE 2007/2008 VALUES
-  # fittedTable[numberOfCovariates == Inf, numberOfCovariates := 30]
-  # fittedTable[trainStartYear == 2007, trainStartYear := 2008]
-  # fittedTable[trainEndYear == 2007, trainEndYear := 2008]
-  # fittedTable[testStartYear == 2007, testStartYear := 2008]
-  
-  # Completing the table with Validation and Test for completeness
-  # valStartYear: 
-  #   FutureUnseen: trainEndYear+1
-  #   FutureTainted: trainStartYear
-  #   Internal: trainStartYear
-  # valEndYear
-  #   FutureUnseen: trainEndYear+1
-  #   FutureTainted: trainEndYear
-  #   Internal: trainEndYear
-  # testEndYear
-  #   FutureUnseen: testStartYear
-  #   FutureTainted: testStartYear
-  #   Internal: trainEndYear
-  
-  fittedTable[typeValidation == "FutureUnseen", valStartYear := trainEndYear+1]
-  fittedTable[typeValidation == "FutureUnseen", valEndYear := trainEndYear+1]
-  fittedTable[typeValidation == "FutureUnseen", testEndYear := testStartYear]
-  
-  fittedTable[typeValidation == "FutureTainted", valStartYear := trainStartYear]
-  fittedTable[typeValidation == "FutureTainted", valEndYear := trainEndYear]
-  fittedTable[typeValidation == "FutureTainted", testEndYear := testStartYear]
-  
-  fittedTable[typeValidation == "Internal", valStartYear := trainStartYear]
-  fittedTable[typeValidation == "Internal", valEndYear := trainEndYear]
-  fittedTable[typeValidation == "Internal", testEndYear := trainEndYear]
-  
-  # Adding forecast horizon (NOTE: Even though internal is technically 0, we want to see the 
-  # performance for comparison to the others, so we use the same of the group)
-  fittedTable[, forecastHorizon := {
-    ref_vals <- testStartYear[typeValidation %in% c("FutureUnseen", "FutureTainted")] -
-      valEndYear[typeValidation %in% c("FutureUnseen", "FutureTainted")]
-    if (length(unique(ref_vals)) != 1) {
-      stop("Mismatch in forecast horizon within group: ", groupId[1])
-    }
-    ref_vals[1]
-  }, by = groupId]
-  
-  # Fixing file names for models ran on the GPU
-  fittedTable[, rawLossPath := sub("^/export", "", rawLossPath)]
-  
-  print("Loading all individual losses into RAM...")
+plotModels <- function(fittedTable = NULL, outPath){
   DTmaster <- file.path(outPath, "DT_master.csv")
   if (file.exists(DTmaster)){
     print(paste0("DT master found! Loading from file... "))
     DT_Master <- fread(DTmaster)
   } else {
+    if (is.null(fittedTable)) stop(paste0("If DT_master.csv is not available,",
+                                          " fittedTable needs to be supplied."))
+    # I decided to remove any 2007/2008 models because of the 
+    # assumption of 2007 being exactly like 2008. I don't think
+    # I can live with that 
+    fittedTable <- fittedTable[trainStartYear != 2007]
+    # Fixing to the correct value
+    fittedTable[numberOfCovariates == Inf,  numberOfCovariates := 30]
+    # Add Training Window Length (Inclusive counting: e.g., 2009-2011 is 3 years)
+    fittedTable[, trainingWindowLength := (trainEndYear - trainStartYear + 1)]
+    
+    # # Fixing wrong naming convention
+    # NOT USED BECAUSE I AM NOT USING THE 2007/2008 VALUES
+    # fittedTable[numberOfCovariates == Inf, numberOfCovariates := 30]
+    # fittedTable[trainStartYear == 2007, trainStartYear := 2008]
+    # fittedTable[trainEndYear == 2007, trainEndYear := 2008]
+    # fittedTable[testStartYear == 2007, testStartYear := 2008]
+    
+    # Completing the table with Validation and Test for completeness
+    # valStartYear: 
+    #   FutureUnseen: trainEndYear+1
+    #   FutureTainted: trainStartYear
+    #   Internal: trainStartYear
+    # valEndYear
+    #   FutureUnseen: trainEndYear+1
+    #   FutureTainted: trainEndYear
+    #   Internal: trainEndYear
+    # testEndYear
+    #   FutureUnseen: testStartYear
+    #   FutureTainted: testStartYear
+    #   Internal: trainEndYear
+    
+    fittedTable[typeValidation == "FutureUnseen", valStartYear := trainEndYear+1]
+    fittedTable[typeValidation == "FutureUnseen", valEndYear := trainEndYear+1]
+    fittedTable[typeValidation == "FutureUnseen", testEndYear := testStartYear]
+    
+    fittedTable[typeValidation == "FutureTainted", valStartYear := trainStartYear]
+    fittedTable[typeValidation == "FutureTainted", valEndYear := trainEndYear]
+    fittedTable[typeValidation == "FutureTainted", testEndYear := testStartYear]
+    
+    fittedTable[typeValidation == "Internal", valStartYear := trainStartYear]
+    fittedTable[typeValidation == "Internal", valEndYear := trainEndYear]
+    fittedTable[typeValidation == "Internal", testEndYear := trainEndYear]
+    
+    # Adding forecast horizon (NOTE: Even though internal is technically 0, we want to see the 
+    # performance for comparison to the others, so we use the same of the group)
+    fittedTable[, forecastHorizon := {
+      ref_vals <- testStartYear[typeValidation %in% c("FutureUnseen", "FutureTainted")] -
+        valEndYear[typeValidation %in% c("FutureUnseen", "FutureTainted")]
+      if (length(unique(ref_vals)) != 1) {
+        stop("Mismatch in forecast horizon within group: ", groupId[1])
+      }
+      ref_vals[1]
+    }, by = groupId]
+    
+    # Fixing file names for models ran on the GPU
+    fittedTable[, rawLossPath := sub("^/export", "", rawLossPath)]
+    
+    print("Loading all individual losses into RAM...")
+    
     print(paste0("DT master not found, creating... It might take some time."))
     DT_Master <- rbindlist(lapply(1:nrow(fittedTable), function(i){
       dt <- data.table(
@@ -113,24 +115,23 @@ plotModels <- function(fittedTable, maxClu, useFuture, outPath){
   dt_paired[, PreValAdvantage := FutureTainted - FutureUnseen]
   # Calculate the Percent Increase in Error (The "Optimism Bias" in %)
   # Formula: (Actual Reality - Model's Illusion) / Model's Illusion * 100
-  dt_paired[, OptimismBiasPct := (FutureUnseen - Internal) / Internal * 100]
-   dt_paired[, PreValImprovementPct := (FutureTainted - FutureUnseen) / FutureTainted * 100]
-   dt_paired[forecastHorizon %in% 1:2, HorizonBin := "Horizon: 1-2 Years"]
-   dt_paired[forecastHorizon %in% 3:4, HorizonBin := "Horizon: 3-4 Years"]
-   dt_paired[forecastHorizon %in% 5:6, HorizonBin := "Horizon: 5-6 Years"]
-   dt_paired[forecastHorizon %in% 7:8, HorizonBin := "Horizon: 7-8 Years"]
-   dt_paired[forecastHorizon %in% 9:10, HorizonBin := "Horizon: 9-10 Years"]
-   dt_paired[forecastHorizon %in% 11:12, HorizonBin := "Horizon: 11-12 Years"]
-   
-   # Factor Ordering
-   dt_paired[, HorizonBin := factor(HorizonBin,
-                              levels = c("Horizon: 1-2 Years",
-                                         "Horizon: 3-4 Years",
-                                         "Horizon: 5-6 Years",
-                                         "Horizon: 7-8 Years",
-                                         "Horizon: 9-10 Years",
-                                         "Horizon: 11-12 Years"))]
-   # Setting 1: 
+  dt_paired[, OptimismBiasPct := (FutureTainted - Internal) / Internal * 100]
+  dt_paired[forecastHorizon %in% 1:2, HorizonBin := "Horizon: 1-2 Years"]
+  dt_paired[forecastHorizon %in% 3:4, HorizonBin := "Horizon: 3-4 Years"]
+  dt_paired[forecastHorizon %in% 5:6, HorizonBin := "Horizon: 5-6 Years"]
+  dt_paired[forecastHorizon %in% 7:8, HorizonBin := "Horizon: 7-8 Years"]
+  dt_paired[forecastHorizon %in% 9:10, HorizonBin := "Horizon: 9-10 Years"]
+  dt_paired[forecastHorizon %in% 11:12, HorizonBin := "Horizon: 11-12 Years"]
+  
+  # Factor Ordering
+  dt_paired[, HorizonBin := factor(HorizonBin,
+                                   levels = c("Horizon: 1-2 Years",
+                                              "Horizon: 3-4 Years",
+                                              "Horizon: 5-6 Years",
+                                              "Horizon: 7-8 Years",
+                                              "Horizon: 9-10 Years",
+                                              "Horizon: 11-12 Years"))]
+  # Setting 1: 
   # Plot A: The Overfitting Story (H1)
   # Setting 1: H1 (The Generalization Gap) - Faceted by Complexity
   # Is the behavior consistent across all forecast horizons? YES
@@ -156,8 +157,8 @@ plotModels <- function(fittedTable, maxClu, useFuture, outPath){
     scale_y_continuous(labels = unit_format(unit = "%")) + # Format Y-axis as percentages
     theme_minimal() +
     coord_cartesian(ylim = c(0, 12)) +
-    labs(title = "Setting 1: H1 (Optimism Bias - % Underestimated Error)",
-         subtitle = "Percentage by which traditional CV underestimates the model's actual future prediction loss.",
+    labs(title = "Model's Optimism Bias",
+         # subtitle = "Percentage by which traditional CV underestimates the model's actual future prediction loss.",
          x = "Total Years of Data (TimeSpan)", 
          y = "Optimism Bias (% Increase in Error)",
          color = "Model Complexity (No. covariates)",
@@ -165,8 +166,8 @@ plotModels <- function(fittedTable, maxClu, useFuture, outPath){
     theme(legend.position = "bottom",
           strip.text = element_blank(),
           panel.grid.minor = element_blank(),
+          text = element_text(size = 12),
           plot.title = element_text(face = "bold", size = 14))
-  P1.1
   
   # Plot B: The PreVal Advantage (H2)
   # When complexity is adequate and we are forecasting very near-term (i.e., 
@@ -180,39 +181,39 @@ plotModels <- function(fittedTable, maxClu, useFuture, outPath){
   # Importantly: PV is considerably more robust, but also degrades very quickly if 
   # the prediction made is too far from the training data (i.e., in our case, after a 
   # decade).
-
+  
   DT1 <- DT_Master
-
+  
   DT1[forecastHorizon %in% 1:2, HorizonBin := "Horizon: 1-2 Years"]
   DT1[forecastHorizon %in% 3:4, HorizonBin := "Horizon: 3-4 Years"]
   DT1[forecastHorizon %in% 5:6, HorizonBin := "Horizon: 5-6 Years"]
   DT1[forecastHorizon %in% 7:8, HorizonBin := "Horizon: 7-8 Years"]
   DT1[forecastHorizon %in% 9:10, HorizonBin := "Horizon: 9-10 Years"]
   DT1[forecastHorizon %in% 11:12, HorizonBin := "Horizon: 11-12 Years"]
-
+  
   # Factor Ordering
   DT1[, HorizonBin := factor(HorizonBin,
-                                        levels = c("Horizon: 1-2 Years",
-                                                   "Horizon: 3-4 Years",
-                                                   "Horizon: 5-6 Years",
-                                                   "Horizon: 7-8 Years",
-                                                   "Horizon: 9-10 Years",
-                                                   "Horizon: 11-12 Years"))]
+                             levels = c("Horizon: 1-2 Years",
+                                        "Horizon: 3-4 Years",
+                                        "Horizon: 5-6 Years",
+                                        "Horizon: 7-8 Years",
+                                        "Horizon: 9-10 Years",
+                                        "Horizon: 11-12 Years"))]
   # Calculate Median
   medianDt <- DT1[, .(mu = median(loss, na.rm = TRUE)),
-                 by = .(scenario, Complexity, HorizonBin)] #HorizonBin
-  medianDt2 <- DT1[, .(mu = median(loss, na.rm = TRUE)),
-                  by = .(scenario, Complexity, forecastHorizon)] #forecastHorizon
-
+                  by = .(scenario, Complexity, HorizonBin)] #HorizonBin
+  # medianDt2 <- DT1[, .(mu = median(loss, na.rm = TRUE)),
+  #                 by = .(scenario, Complexity, forecastHorizon)] #forecastHorizon
+  
   qDT <- DT1[, .(
     q25 = quantile(loss, 0.25, na.rm = TRUE),
     q75 = quantile(loss, 0.75, na.rm = TRUE)
   ), by = .(scenario, HorizonBin, Complexity)]
   
-  qDT2 <- DT1[, .(
-    q25 = quantile(loss, 0.25, na.rm = TRUE),
-    q75 = quantile(loss, 0.75, na.rm = TRUE)
-  ), by = .(scenario, forecastHorizon, Complexity)]
+  # qDT2 <- DT1[, .(
+  #   q25 = quantile(loss, 0.25, na.rm = TRUE),
+  #   q75 = quantile(loss, 0.75, na.rm = TRUE)
+  # ), by = .(scenario, forecastHorizon, Complexity)]
   
   P1.2 <- ggplot(DT1, aes(x = loss)) +
     # Filled Density Forms
@@ -229,508 +230,362 @@ plotModels <- function(fittedTable, maxClu, useFuture, outPath){
                linetype = "dashed", linewidth = 0.7) +
     geom_vline(xintercept = 2.3979, linetype = "dotted", color = "black", linewidth = 0.8) +
     # THE GRID
-    facet_grid(Complexity ~ HorizonBin, scales = "free_y") +
+    facet_grid(Complexity ~ HorizonBin) +
     # Aesthetics
-    scale_fill_manual(values = c("Internal" = "#4daf4a", "FutureTainted" = "#377eb8", "FutureUnseen" = "#e41a1c"),
+    scale_fill_manual(values = c("Internal" = "#4daf4a", 
+                                 "FutureTainted" = "#377eb8", 
+                                 "FutureUnseen" = "#e41a1c"),
                       labels = c(
-                        "Cross-validation",
-                        "Forecast with cross-validated model",
-                        "Forecast with predictive validated model"
+                        "Internal" = "Cross-validation",
+                        "FutureTainted" = "Forecast with cross-validated model",
+                        "FutureUnseen" = "Forecast with predictive validated model"
                       )) +
-    scale_color_manual(values = c("Internal" = "#4daf4a", "FutureTainted" = "#377eb8", "FutureUnseen" = "#e41a1c"),
+    scale_color_manual(values = c("Internal" = "#4daf4a", 
+                                  "FutureTainted" = "#377eb8", 
+                                  "FutureUnseen" = "#e41a1c"),
                        labels = c(
-                         "Cross-validation",
-                         "Forecast with cross-validated model",
-                         "Forecast with predictive validated model"
+                         "Internal" = "Cross-validation",
+                         "FutureTainted" = "Forecast with cross-validated model",
+                         "FutureUnseen" = "Forecast with predictive validated model"
                        )) +
     theme_minimal() +
     coord_cartesian(xlim = c(2.2, 2.63)) +
     
     labs(
-      title = "Predictive vs. Cross validation for different forecast horizons and model complexity (median)",
+      title = "Predictive vs. Cross validation", 
+      # for different forecast horizons and model complexity (median)",
       x = "Prediction Loss (Lower is better)",
       y = "Density (Strata)"
     ) +
     
     theme(
       legend.position = "bottom",
-      strip.text = element_text(face = "bold", size = 11),
+      text = element_text(size = 12),
+      strip.text = element_text(face = "bold", size = 12),
       panel.spacing = unit(1, "lines"),
       plot.title = element_text(face = "bold", size = 14),
       panel.grid.minor = element_blank()
     )
-    P1.2
-  
-    browser()
   # Setting 2: Does PreVal work better in certain historical periods (e.g., during rapid landscape change)?
   # We look at the "Advantage" vs the actual Year in history
-  P2.1 <- ggplot(dt_paired, aes(x = TargetYear, y = PreValAdvantage, color = Complexity)) +
-    geom_hline(yintercept = 0, linetype = "dashed") +
-    # Smooth across the years
-    geom_smooth(method = "loess", span = 0.4, se = TRUE, alpha = 0.1) +
-    facet_wrap(~Complexity, scales = "free_y") +
+  # Here we show that our tool’s value isn't just a methodological fluke; 
+  # it’s a response to ecological volatility. While standard models worked 
+  # 'okay' when the landscape was stable (pre-2015), they began to fail as 
+  # environmental noise increased. Our iterative validation (PreVal) corrected 
+  # this, providing a significantly more accurate forecast for the last 5 years 
+  # of caribou history.
+  P2.1 <- ggplot(dt_paired, aes(x = TargetYear, y = PreValAdvantage, 
+                                color = Complexity, fill = Complexity)) +
+    # 1. Zero Reference
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", alpha = 0.6) +
+    
+    # 2. Colored Ribbon (Original Data Variation - IQR)
+    stat_summary(fun.data = median_hilow, geom = "ribbon", alpha = 0.15, color = NA) +
+    
+    # 3. Raw Median Trend (No smoothing)
+    stat_summary(fun = median, geom = "line", linewidth = 1.2) +
+    stat_summary(fun = median, geom = "point", size = 2) +
+    
+    # 4. Fix X-axis to Rounded Years
+    scale_x_continuous(breaks = seq(min(dt_paired$TargetYear), max(dt_paired$TargetYear), by = 2)) +
+    
+    # Aesthetics
+    facet_grid(.~Complexity) +
+    scale_color_viridis_d() + 
+    scale_fill_viridis_d() +
     theme_minimal() +
-    labs(title = "Setting 2: PreVal Advantage Through History (All Target Years)",
-         subtitle = "Shows if the tool's value is stable or context-dependent.",
-         x = "Forecast Target Year", y = "Paired Delta Loss (Advantage)")
+    labs(title = "PreVal Advantage for All Years)",
+         x = "Forecast Target Year", y = "Paired Delta Loss (Advantage)") +
+    theme(legend.position = "none",,
+          text = element_text(size = 11),
+          strip.text = element_text(face = "bold"),
+          panel.grid.minor = element_blank())
   P2.1
-  
   # Setting 3: If a manager has a 3-year, 6-year, or 9-year budget, is the conclusion the same?
   # Filter for 3 levels of "Data Budgets"
-  dt_budgets <- dt_paired[TimeSpan %in% c(4, 7, 10)]
-  
-  P3.1 <- ggplot(dt_budgets, aes(x = StartYear, y = PreValAdvantage, color = Complexity)) +
-    geom_hline(yintercept = 0, linetype = "dashed") +
-    geom_smooth(method = "loess", span = 0.6, se = FALSE, linewidth = 1.2) +
-    # Facet by the budget size
-    facet_grid(Complexity ~ TimeSpan, labeller = label_both) +
-    theme_minimal() +
-    labs(title = "Setting 3: Advantage Stability Across Budgets and Years",
-         subtitle = "Columns = Data Budget (TimeSpan). Rows = Model Complexity.",
-         x = "Experiment Start Year", y = "PreVal Advantage")
-  P3.1 
-
-
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  # I THINK THE DENSITY PLOT SHOWS THIS MUCH BETTER...This plot is confusing!
-  # P1.2 <- ggplot(dt_paired, 
-  #        aes(x = TimeSpan, y = PreValAdvantage, color = Complexity, fill = Complexity)) +
-  #   # 1. Background raw points
-  #   geom_point(alpha = 0.6, position = position_jitter(width = 0.2), size = 1) +
-  #   # 2. Colored ribbons (IQR)
-  #   stat_summary(fun.data = median_hilow, geom = "ribbon", alpha = 0.15, color = NA) +
-  #   # 3. Median Trend Line
-  #   stat_summary(fun = median, geom = "line", linewidth = 1.2) +
-  #   # 4. Zero Reference
+  # dt_budgets <- dt_paired[TimeSpan %in% c(4, 7, 10)]
+  # 
+  # P3.1 <- P3.1 <- ggplot(dt_budgets, aes(x = TargetYear, y = PreValAdvantage, color = Complexity, fill = Complexity)) +
+  #   # 1. Zero Reference
   #   geom_hline(yintercept = 0, linetype = "dashed", color = "black", alpha = 0.6) +
-  #   # 5. Separate into 4 columns
-  #   facet_wrap(HorizonBin ~ Complexity, ncol = 4, labeller = label_both) +
+  #   
+  #   # 2. IQR Ribbons (Variation across different experiments)
+  #   stat_summary(fun.data = median_hilow, geom = "ribbon", alpha = 0.1, color = NA) +
+  #   
+  #   # 3. Median Trend (No smoothing, showing raw median per target year)
+  #   stat_summary(fun = median, geom = "line", linewidth = 1.2) +
+  #   
+  #   # 4. Rounded X-axis years
+  #   scale_x_continuous(breaks = seq(2012, 2022, by = 2)) +
+  #   
+  #   # 5. Facet Grid: Budget (Columns) vs Complexity (Rows)
+  #   facet_grid(Complexity ~ TimeSpan, labeller = label_both) +
+  #   
   #   # Aesthetics
-  #   scale_color_viridis_d() + 
-  #   scale_fill_viridis_d() +
-  #   scale_y_continuous(labels = unit_format(unit = "%")) + # Format Y-axis as percentages
+  #   scale_color_viridis_d() + scale_fill_viridis_d() +
   #   theme_minimal() +
-  #   coord_cartesian(ylim = c(-0.1, 0.5)) +
-  #   labs(title = "Setting 1: H2 (The PreVal Advantage)",
-  #        subtitle = "Delta = (Blue - Red). Positive = PreVal WON.",
-  #        x = "Total Years Spanned by Experiment (TimeSpan)", y = "Paired Delta Loss") +
+  #   labs(title = "Setting 3: Advantage Alignment by Forecast Target Year",
+  #        subtitle = "Columns = Data Budget (TimeSpan). Rows = Model Complexity.",
+  #        x = "Year Being Forecasted (TargetYear)", y = "PreVal Advantage (Blue - Red)") +
   #   theme(legend.position = "none",
-  #         strip.text = element_blank(),
-  #         plot.title = element_text(face = "bold", size = 14))
-  #         
-  #         
-  # # Summarize DT_Master to the Experiment Level (one row per groupId)
-  # # We calculate the median loss for each unique experiment run.
-  # dt_experiments <- DT_Master[, .(
-  #   med_loss = median(loss)
-  # ), by = .(groupId, Complexity, scenario, trainingWindow, 
-  #           trainEndYear, testStartYear, forecastHorizon)]
+  #         strip.text = element_text(face = "bold"),
+  #         panel.grid.minor = element_blank())  
+  # Filter for the 3 budget levels and ensure TimeSpan is a factor for coloring
+  # compTimes <- unique(sort(dt_paired$TimeSpan))#c(4, 7, 10)
+  # dt_budgets <- dt_paired[TimeSpan %in% compTimes]
+  # dt_budgets[, TimeSpan := factor(TimeSpan, levels = compTimes)]
+  # # 1. Aggregate the FULL paired dataset (Setting 1: Horizon 1)
+  # # This includes every year from the minimum to the maximum TimeSpan
   # 
-  # # Pivot to Wide Format
-  # # This puts our scenarios side-by-side for the SAME groupId
-  # dt_paired <- dcast(dt_experiments, 
-  #                    groupId + Complexity + forecastHorizon ~ scenario, 
-  #                    value.var = "med_loss")
+  # dt_full_summary <- dt_paired[forecastHorizon == 1, .(
+  #   medAdvantage = median(PreValAdvantage),
+  #   q25 = quantile(PreValAdvantage, 0.25),
+  #   q75 = quantile(PreValAdvantage, 0.75)
+  # ), by = .(Complexity, TimeSpan)]
   # 
-  # # STEP 3: Calculate the Scientific "Deltas" (The Effect Sizes)
-  # # H1 (Overfitting Gap): How much does the model lie to us?
-  # dt_paired[, GenGap := FutureUnseen - Internal]
-  # 
-  # # H2 (PreVal Advantage): How much better is our tool than the status quo?
-  # # Note: Status Quo (Tainted/Blue) minus our Tool (Unseen/Red)
-  # dt_paired[, PreValAdvantage := FutureTainted - FutureUnseen]
-  # 
-  # # ----------------------------------------------------------------------------------------- #
-  # # SETTING 1: Constant Forecast Horizon (The "Accumulating Data" Story)                      #
-  # # "Same starting year (2009), fixed horizon (1 year), increasing training window"           #
-  # # ----------------------------------------------------------------------------------------- #
-  # 
-  # # Plot A: The Generalization Gap (H1)
-  # # "How much is the model lying to us across different complexities?"
-  # P1.1 <- ggplot(dt_paired, aes(x = forecastHorizon, y = GenGap, color = Complexity)) +
-  #   geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
-  #   geom_smooth(method = "loess", se = TRUE, linewidth = 1.5) + # Loess shows the real shape better
-  #   geom_point(alpha = 0.2) +
-  #   theme_minimal() +
-  #   labs(title = "H1: The Generalization Gap (Strictly Paired)",
-  #        x = "Relative Training Depth (Years)", y = "Delta Loss (PV - CV)")
-  # P1.1
-  # 
-  # # Plot B: The PreVal Advantage (H2)
-  # # "Did we beat the Status Quo for the same target?"
-  # P1.2 <- ggplot(dt_paired[forecastHorizon == 1], aes(x = ref_window, y = PreValAdvantage, color = Complexity)) +
-  #   geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
-  #   geom_smooth(method = "loess", se = TRUE, linewidth = 1.5) +
-  #   geom_point(alpha = 0.2) +
-  #   theme_minimal() +
-  #   labs(title = "H2: The PreVal Advantage (Strictly Paired)",
-  #        x = "Relative Training Depth (Years)", y = "Delta Loss (Blue - Red)")
-  # P1.2
-  # 
-  # # ----------------------------------------------------------------------------------------- #
-  # # SETTING 2: Constant Forecast Year (The "Predicting 2022" Story)                           #
-  # # "Every model is predicting the same target (2022) with different histories"               #
-  # # ----------------------------------------------------------------------------------------- #
-  # 
-  # DT_Setting2 <- DT_Master[testStartYear == 2022] # All years
-  # 
-  # # 1. Summarize 
-  # sum2 <- DT_Setting2[, .(
-  #   med = median(loss),
-  #   q25 = quantile(loss, 0.25),
-  #   q75 = quantile(loss, 0.75)
-  # ), by = .(trainingWindow, Complexity, scenario)]
-  # 
-  # # 2. Plot
-  # ggplot(sum2, aes(x = as.factor(trainingWindow), y = med, color = scenario)) +
-  #   geom_pointrange(aes(ymin = q25, ymax = q75), position = position_dodge(width = 0.5)) +
-  #   facet_grid(. ~ Complexity, labeller = label_both) +
-  #   scale_color_manual(values = scen_colors, labels = scen_labels) +
-  #   theme_minimal() +
-  #   labs(title = "Setting 2: Predicting Year 2022 Performance",
-  #        subtitle = "Comparing different training window lengths (Depth) for the same target",
-  #        x = "Number of Training Years (Window Depth)", y = "Median Prediction Loss") +
-  #   theme(legend.position = "bottom")
-  # 
-  # # ----------------------------------------------------------------------------------------- #
-  # # SETTING 3: Constant Forecast Window (The "Moving Window" Story)                           #
-  # # "Training is always exactly 3 years, but the window moves through time"                   #
-  # # ----------------------------------------------------------------------------------------- #
-  # 
-  # # Note: You can change '3' to whatever your standard window was in the experiment
-  # DT_Setting3 <- DT_Master[trainingWindow == 3]
-  # 
-  # # 1. Summarize
-  # sum3 <- DT_Setting3[, .(
-  #   med = median(loss),
-  #   q25 = quantile(loss, 0.25),
-  #   q75 = quantile(loss, 0.75)
-  # ), by = .(trainStartYear, Complexity, scenario)]
-  # 
-  # # 2. Plot
-  # ggplot(sum3, aes(x = trainStartYear, y = med, color = scenario, group = scenario)) +
-  #   geom_line(linewidth = 1) +
-  #   geom_point(size = 2) +
-  #   facet_wrap(~Complexity, labeller = label_both) +
-  #   scale_color_manual(values = scen_colors, labels = scen_labels) +
-  #   theme_minimal() +
-  #   labs(title = "Setting 3: Stability of Ecological Drivers (3-Year Moving Window)",
-  #        subtitle = "Testing if predictive performance changes as the landscape evolves",
-  #        x = "Start Year of 3-Year Training Window", y = "Median Prediction Loss") +
-  #   theme(legend.position = "bottom")
-  # 
-  # 
-  # print("Settings generated. Ready for visualization.")
+  # # Ensure TimeSpan is numeric for a smooth continuous X-axis
+  # dt_full_summary[, TimeSpan := as.numeric(TimeSpan)]
   
+  
+  ###########################################################
 
-  ########################################################################
-  # PLOT 0: Density of loss for each caribou decision for all scenarios  #
-  # This plot focuses on the horizon. However, we have probably a strong #
-  # effect of amount of data that needs to be taken into account.        #
-  # 1. Prepare Data and Define Horizon Bins                              #
-  ########################################################################
-  # DT1 <- DT_Master
-  # 
-  # DT1[forecastHorizon %in% 1:2, HorizonBin := "Horizon: 1-2 Years"]
-  # DT1[forecastHorizon %in% 3:4, HorizonBin := "Horizon: 3-4 Years"]
-  # DT1[forecastHorizon %in% 5:6, HorizonBin := "Horizon: 5-6 Years"]
-  # DT1[forecastHorizon %in% 7:8, HorizonBin := "Horizon: 7-8 Years"]
-  # DT1[forecastHorizon %in% 9:10, HorizonBin := "Horizon: 9-10 Years"]
-  # DT1[forecastHorizon %in% 11:12, HorizonBin := "Horizon: 11-12 Years"]
-  # 
-  # # Factor Ordering
-  # DT1[, HorizonBin := factor(HorizonBin,
-  #                                       levels = c("Horizon: 1-2 Years",
-  #                                                  "Horizon: 3-4 Years",
-  #                                                  "Horizon: 5-6 Years",
-  #                                                  "Horizon: 7-8 Years",
-  #                                                  "Horizon: 9-10 Years",
-  #                                                  "Horizon: 11-12 Years"))]
-  # 
-  # names(DT1)[names(DT1) == "numberOfCovariates"] <- "Complexity"
-  # 
-  # # Calculate Median
-  # medianDt <- DT1[, .(mu = median(loss, na.rm = TRUE)), 
-  #                by = .(scenario, Complexity, HorizonBin)] #HorizonBin
-  # 
-  # qDT <- DT1[, .(
-  #   q25 = quantile(loss, 0.25, na.rm = TRUE),
-  #   q50 = quantile(loss, 0.50, na.rm = TRUE),  # median (you already have this)
-  #   q75 = quantile(loss, 0.75, na.rm = TRUE)
-  # ), by = .(scenario, HorizonBin, Complexity)]
-  # 
-  # # 4. Create the Grid Plot (originally without bins)
-  # pFinalGridBinned <- ggplot(DT1, aes(x = loss)) +
-  #   # Filled Density Forms
-  #   geom_density(aes(fill = scenario, color = scenario), alpha = 0.3, linewidth = 0.5) +
-  #   # IQR shaded band
-  #   geom_rect(
-  #     data = qDT,
-  #     aes(xmin = q25, xmax = q75, ymin = -Inf, ymax = Inf, fill = scenario),
-  #     inherit.aes = FALSE,
-  #     alpha = 0.15
-  #   ) +
-  #   # scenario Median Lines
-  #   geom_vline(data = medianDt, aes(xintercept = mu, color = scenario), 
-  #              linetype = "dashed", linewidth = 0.7) +
-  #   # # Staggered Annotations (to prevent overlap)
-  #   # geom_text(data = meansDt,
-  #   #           aes(x = mu, y = Inf, label = round(mu, 3), color = scenario, vjust = vPos),
-  #   #           size = 3, fontface = "bold") +
-  #   # Random Baseline Reference (2.40)
-  #   geom_vline(xintercept = 2.3979, linetype = "dotted", color = "black", linewidth = 0.8) +
-  #   
-  #   # THE GRID
-  #   facet_grid(Complexity ~ HorizonBin, scales = "free_y") +
-  #   
-  #   # Aesthetics
-  #   scale_fill_manual(values = c("Internal" = "#4daf4a", "FutureTainted" = "#377eb8", "FutureUnseen" = "#e41a1c"),
-  #                     labels = c(
-  #                       "Cross-validation",
-  #                       "Forecast with cross-validated model",
-  #                       "Forecast with predictive validated model"
-  #                     )) +
-  #   scale_color_manual(values = c("Internal" = "#4daf4a", "FutureTainted" = "#377eb8", "FutureUnseen" = "#e41a1c"),
-  #                      labels = c(
-  #                        "Cross-validation",
-  #                        "Forecast with cross-validated model",
-  #                        "Forecast with predictive validated model"
-  #                      )) +
-  #   
+  # 1. Aggregate Advantage across both TimeSpan and Horizon
+  dt_paired[, HistoryBudget := (HistoryEnd - StartYear + 1)]
+  
+  # 2. Plot as a Heatmap (Profitability Map)
+  # 2. Aggregate the median advantage for the tiles
+  dt_stress_agg <- dt_paired[, .(
+    med_Advantage = median(PreValAdvantage, na.rm = TRUE)
+  ), by = .(Complexity, HistoryBudget, forecastHorizon)]
+  
+  # 3. The Plot
+  P3.1 <- ggplot(dt_stress_agg, aes(x = HistoryBudget, y = forecastHorizon, fill = med_Advantage)) +
+    geom_tile(color = "white", linewidth = 0.2) + 
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0, name = "PreVal\nAdvantage") +
+    facet_grid(~Complexity) +
+    scale_y_continuous(breaks = seq(1, 12, by = 1)) +
+    scale_x_continuous(breaks = seq(2, max(dt_stress_agg$HistoryBudget), by = 2)) +
+    theme_minimal() +
+    labs(title = "The Profitability Map: The PreVal 'Stress Test'",
+         subtitle = "Blue = PreVal wins despite having one less year of training data than the Status Quo.",
+         x = "Years of Historical Data (History Budget)",
+         y = "Years into the Future (Forecast Horizon)") +
+    theme(strip.text = element_text(face = "bold", size = 12),
+          panel.grid.minor = element_blank())
+  
+  # 1. Group Horizons into 3-year blocks for clean visualization
+  dt_paired[, HorizonBlock := fcase(
+    forecastHorizon <= 3, "Horizon: 1-3y",
+    forecastHorizon > 3 & forecastHorizon <= 6, "Horizon: 4-6y",
+    forecastHorizon > 6 & forecastHorizon <= 9, "Horizon: 7-9y",
+    forecastHorizon > 9, "Horizon: 10-12y"
+  )]
+  
+  dt_paired[, HorizonBlock := factor(HorizonBlock, levels = c(
+    "Horizon: 1-3y", "Horizon: 4-6y", "Horizon: 7-9y", "Horizon: 10-12y"
+  ))]
+  
+  # 2. Calculate the Advantage per Validation Year (HistoryEnd)
+  dt_anchor_stress <- dt_paired[, .(
+    med_Adv = median(PreValAdvantage, na.rm = TRUE),
+    iqr_lower = quantile(PreValAdvantage, 0.25, na.rm = TRUE),
+    iqr_upper = quantile(PreValAdvantage, 0.75, na.rm = TRUE),
+    n_exp = .N
+  ), by = .(HistoryEnd, Complexity, HorizonBlock)]
+  
+  # 3. Filter for robust data (Require at least 2 experiments to draw a bar)
+  dt_anchor_filtered <- dt_anchor_stress[n_exp >= 2]
+  
+  # 4. The Plot
+  P3.2 <- ggplot(dt_anchor_filtered, aes(x = as.factor(HistoryEnd), y = med_Adv, fill = med_Adv > 0)) +
+    geom_bar(stat = "identity", color = "black", alpha = 0.8) +
+    geom_errorbar(aes(ymin = iqr_lower, ymax = iqr_upper), width = 0.3, alpha = 0.5) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 1) +
+    facet_grid(HorizonBlock ~ Complexity, scales = "free_y") +
+    scale_fill_manual(values = c("TRUE" = "#377eb8", "FALSE" = "#e41a1c"), guide = "none") +
+    coord_cartesian(ylim = c(-0.1, 0.1)) +
+    theme_minimal() +
+    labs(title = "Impact of the Validation Year",
+         x = "Year Used for Validation", 
+         y = "Median PreVal Advantage") +
+    theme(strip.text = element_text(face = "bold", size = 11),
+          axis.text.x = element_text(angle = 45, hjust = 1),
+          panel.grid.minor = element_blank())
+  
+  ###########################################################
+  
+  # 1. Calculate Difficulty (Tainted) and Surprise (Tainted vs Internal)
+  year_stats <- dt_paired[forecastHorizon == 1, .(
+    med_loss = median(FutureTainted), # Use Tainted to show Status Quo difficulty
+    q25_loss = quantile(FutureTainted, 0.25),
+    q75_loss = quantile(FutureTainted, 0.75),
+    med_bias = median(OptimismBiasPct) # Now based on Tainted - Internal
+  ), by = .(TargetYear)]
+  
+  # 1. Global Year Stats (Mixing all horizons)
+  year_stats_global <- dt_paired[, .(
+    med_loss = median(FutureTainted),
+    q25_loss = quantile(FutureTainted, 0.25),
+    q75_loss = quantile(FutureTainted, 0.75),
+    med_bias = median(OptimismBiasPct)
+  ), by = .(TargetYear)]
+  
+  # # 2. Updated Plot P4.1
+  # P4.1 <- ggplot(year_stats, aes(x = TargetYear)) +
+  #   geom_ribbon(aes(ymin = q25_loss, ymax = q75_loss), alpha = 0.15, fill = "grey20") +
+  #   geom_line(aes(y = med_loss), linewidth = 1, color = "black") +
+  #   geom_point(aes(y = med_loss, size = med_bias, color = med_bias)) +
+  #   scale_color_viridis_c(option = "plasma", name = "Surprise (Bias %)") +
+  #   scale_size_continuous(name = "Surprise (Bias %)") +
   #   theme_minimal() +
-  #   coord_cartesian(xlim = c(2.2, 2.63)) + 
-  #   
-  #   labs(
-  #     title = "Predictive vs. Cross validation for different forecast horizons and model complexity (median)",
-  #     x = "Prediction Loss (Lower is better)",
-  #     y = "Density (Strata)"
-  #   ) +
-  #   
-  #   theme(
-  #     legend.position = "bottom",
-  #     strip.text = element_text(face = "bold", size = 11),
-  #     panel.spacing = unit(1, "lines"),
-  #     plot.title = element_text(face = "bold", size = 14),
-  #     panel.grid.minor = element_blank()
-  #   )
-  # 
-  # # Display result
-  # pFinalGridBinned
-  # }
-  # ### HOMOGENEOUS SAMPLES
-  # { 
-  # # Plot 7. Look at it also from a sample size perspective!
-  # DTplot <- unique(DT1[, .(groupId, Complexity, totalSamples, forecastHorizon)])
-  # ggplot(DTplot, aes(x = forecastHorizon, y = totalSamples, color = Complexity)) +
-  #   geom_point(alpha = 0.6) +
-  #   geom_smooth(se = FALSE) +
-  #   theme_minimal()
-  # 
-  # ggplot(DTplot, aes(x = forecastHorizon, y = Complexity, fill = totalSamples)) +
-  #   geom_tile() +
-  #   scale_fill_viridis_c() +
-  #   theme_minimal()
-  # 
-  # ggplot(DTplot, aes(x = forecastHorizon, y = totalSamples)) +
-  #   geom_point(alpha = 0.5) +
-  #   facet_wrap(~ Complexity) +
-  #   theme_minimal()
-  # 
-  # homogSamples <- DT1[totalSamples > 38992 & totalSamples < 42209 ,]
-  # 
-  # # Calculate Means and Staggered Annotation Positions
-  # meansDthom <- homogSamples[, .(mu = mean(loss, na.rm = TRUE)), 
-  #                by = .(scenario, Complexity, HorizonBin)] #HorizonBin
-  # meansDthom[scenario == "Internal", vPos := 1.5]
-  # meansDthom[scenario == "FutureTainted", vPos := 3.5]
-  # meansDthom[scenario == "FutureUnseen", vPos := 5.5]
-  # 
-  # # 4. Create the Grid Plot (originally without bins)
-  # gridBinnedHom <- ggplot(homogSamples, aes(x = loss)) +
-  #   # Filled Density Forms
-  #   geom_density(aes(fill = scenario, color = scenario), alpha = 0.3, linewidth = 0.5) +
-  #   # scenario Mean Lines
-  #   geom_vline(data = meansDthom, aes(xintercept = mu, color = scenario), 
-  #              linetype = "dashed", linewidth = 0.7) +
-  #    geom_vline(xintercept = 2.3979, linetype = "dotted", color = "black", linewidth = 0.8) +
-  #   
-  #   # THE GRID
-  #   facet_grid(Complexity ~ HorizonBin, scales = "free_y") +
-  #   
-  #   # Aesthetics
-  #   scale_fill_manual(values = c("Internal" = "#4daf4a", "FutureTainted" = "#377eb8", "FutureUnseen" = "#e41a1c"),
-  #                     labels = c(
-  #                       "Cross-validation",
-  #                       "Forecast with cross-validated model",
-  #                       "Forecast with predictive validated model"
-  #                     )) +
-  #   scale_color_manual(values = c("Internal" = "#4daf4a", "FutureTainted" = "#377eb8", "FutureUnseen" = "#e41a1c"),
-  #                      labels = c(
-  #                        "Cross-validation",
-  #                        "Forecast with cross-validated model",
-  #                        "Forecast with predictive validated model"
-  #                      )) +
-  #   
-  #   theme_minimal() +
-  #   coord_cartesian(xlim = c(1.9, 3.1)) + 
-  #   
-  #   labs(
-  #     title = "Predictive vs. Cross validation for different forecast horizons and model complexity",
-  #     x = "Prediction Loss (Lower is better)",
-  #     y = "Density (Strata)"
-  #   ) +
-  #   
-  #   theme(
-  #     legend.position = "bottom",
-  #     strip.text = element_text(face = "bold", size = 11),
-  #     panel.spacing = unit(1, "lines"),
-  #     plot.title = element_text(face = "bold", size = 14),
-  #     panel.grid.minor = element_blank()
-  #   )
-  # 
-  # # Display result
-  # gridBinnedHom
-  # }
-  # 
-  # ########################################################################
-  # # PLOT 2: Density of loss for each caribou decision for all scenarios  #
-  # # This plot focuses on the horizon. However, we have probably a strong #
-  # # effect of amount of data that needs to be taken into account.        #
-  # # 1. Prepare Data and Define Horizon Bins                              #
-  # ########################################################################
-  # 
-  # DT1path <- file.path(outPath, "DT1.csv")
-  # 
-  # if (file.exists(DT1path)){
-  #   print(paste0("DT1 found! Loading from file... "))
-  #   DT1 <- fread(DT1path)
-  # } else {
-  #   print(paste0("DT1 not found... "))
-  #   DT1 <- rbindlist(lapply(1:NROW(fittedTable), function(index){
-  #     dt <- data.table(
-  #       groupId = fittedTable[index, groupId],
-  #       numberOfCovariates = fittedTable[index, numberOfCovariates],
-  #       forecastHorizon = fittedTable[index, forecastHorizon],
-  #       totalSamples = fittedTable[index, totalSamples],
-  #       scenario = fittedTable[index, typeValidation],
-  #       loss = readRDS(fittedTable[index, rawLossPath])
-  #     )
-  #     return(dt)
-  #   }), use.names = TRUE)
-  #   fwrite(DT1, DT1path)
-  # }
-  # 
-  # DT1[, scenario := factor(scenario, 
-  #                          levels = c("Internal", "FutureTainted", "FutureUnseen"))]
-  # DT1[, numberOfCovariates := factor(numberOfCovariates, 
-  #                                    levels = c("2", "5", 
-  #                                               "10", "30"))]
-  # 
-  # DT1[forecastHorizon %in% 1:2, HorizonBin := "Horizon: 1-2 Years"]
-  # DT1[forecastHorizon %in% 3:4, HorizonBin := "Horizon: 3-4 Years"]
-  # DT1[forecastHorizon %in% 5:6, HorizonBin := "Horizon: 5-6 Years"]
-  # DT1[forecastHorizon %in% 7:8, HorizonBin := "Horizon: 7-8 Years"]
-  # DT1[forecastHorizon %in% 9:10, HorizonBin := "Horizon: 9-10 Years"]
-  # DT1[forecastHorizon %in% 11:12, HorizonBin := "Horizon: 11-12 Years"]
-  # 
-  # # Factor Ordering
-  # DT1[, HorizonBin := factor(HorizonBin,
-  #                            levels = c("Horizon: 1-2 Years",
-  #                                       "Horizon: 3-4 Years",
-  #                                       "Horizon: 5-6 Years",
-  #                                       "Horizon: 7-8 Years",
-  #                                       "Horizon: 9-10 Years",
-  #                                       "Horizon: 11-12 Years"))]
-  # 
-  # names(DT1)[names(DT1) == "numberOfCovariates"] <- "Complexity"
-  # 
-  # # Calculate Median
-  # medianDt <- DT1[, .(mu = median(loss, na.rm = TRUE)), 
-  #                 by = .(scenario, Complexity, HorizonBin)] #HorizonBin
-  # 
-  # qDT <- DT1[, .(
-  #   q25 = quantile(loss, 0.25, na.rm = TRUE),
-  #   q50 = quantile(loss, 0.50, na.rm = TRUE),  # median (you already have this)
-  #   q75 = quantile(loss, 0.75, na.rm = TRUE)
-  # ), by = .(scenario, HorizonBin, Complexity)]
-  # 
-  # # 4. Create the Grid Plot (originally without bins)
-  # pFinalGridBinned <- ggplot(DT1, aes(x = loss)) +
-  #   # Filled Density Forms
-  #   geom_density(aes(fill = scenario, color = scenario), alpha = 0.3, linewidth = 0.5) +
-  #   # IQR shaded band
-  #   geom_rect(
-  #     data = qDT,
-  #     aes(xmin = q25, xmax = q75, ymin = -Inf, ymax = Inf, fill = scenario),
-  #     inherit.aes = FALSE,
-  #     alpha = 0.15
-  #   ) +
-  #   # scenario Median Lines
-  #   geom_vline(data = medianDt, aes(xintercept = mu, color = scenario), 
-  #              linetype = "dashed", linewidth = 0.7) +
-  #   # # Staggered Annotations (to prevent overlap)
-  #   # geom_text(data = meansDt,
-  #   #           aes(x = mu, y = Inf, label = round(mu, 3), color = scenario, vjust = vPos),
-  #   #           size = 3, fontface = "bold") +
-  #   # Random Baseline Reference (2.40)
-  #   geom_vline(xintercept = 2.3979, linetype = "dotted", color = "black", linewidth = 0.8) +
-  #   
-  #   # THE GRID
-  #   facet_grid(Complexity ~ HorizonBin, scales = "free_y") +
-  #   
-  #   # Aesthetics
-  #   scale_fill_manual(values = c("Internal" = "#4daf4a", "FutureTainted" = "#377eb8", "FutureUnseen" = "#e41a1c"),
-  #                     labels = c(
-  #                       "Cross-validation",
-  #                       "Forecast with cross-validated model",
-  #                       "Forecast with predictive validated model"
-  #                     )) +
-  #   scale_color_manual(values = c("Internal" = "#4daf4a", "FutureTainted" = "#377eb8", "FutureUnseen" = "#e41a1c"),
-  #                      labels = c(
-  #                        "Cross-validation",
-  #                        "Forecast with cross-validated model",
-  #                        "Forecast with predictive validated model"
-  #                      )) +
-  #   
-  #   theme_minimal() +
-  #   coord_cartesian(xlim = c(2.2, 2.63)) + 
-  #   
-  #   labs(
-  #     title = "Predictive vs. Cross validation for different forecast horizons and model complexity (median)",
-  #     x = "Prediction Loss (Lower is better)",
-  #     y = "Density (Strata)"
-  #   ) +
-  #   
-  #   theme(
-  #     legend.position = "bottom",
-  #     strip.text = element_text(face = "bold", size = 11),
-  #     panel.spacing = unit(1, "lines"),
-  #     plot.title = element_text(face = "bold", size = 14),
-  #     panel.grid.minor = element_blank()
-  #   )
-  # 
-  # # Display result
-  # pFinalGridBinned
-  # 
+  #   scale_x_continuous(breaks = seq(min(year_stats_global$TargetYear), max(year_stats_global$TargetYear), by = 1)) +
+  #   labs(title = "Status Quo Forecasting: Difficulty and Deception",
+  #        # subtitle = "Metrics (Bias) lie most when the standard model (Tainted) fails most.",
+  #        x = "Target Year",
+  #        y = "Median Status Quo Prediction Loss")
+  
+  # 2. PLOT: Absolute Difficulty with Bias as Point Scale
+  P4.1 <- ggplot(year_stats_global, aes(x = TargetYear)) +
+    # 1. Background Confidence Ribbon
+    geom_ribbon(aes(ymin = q25_loss, ymax = q75_loss), alpha = 0.15, fill = "darkblue") +
+    
+    # 2. Median Difficulty Line
+    geom_line(aes(y = med_loss), linewidth = 1) +
+    
+    # 3. Points: Size and Color both mapped to med_bias
+    geom_point(aes(y = med_loss, size = med_bias, color = med_bias)) +
+    
+    # 4. Merging and Renaming Scales
+    scale_color_viridis_c(option = "magma", name = "Optimism Bias %") +
+    scale_size_continuous(name = "Optimism Bias %") + # This merges the legends
+    
+    # 5. Fix X-axis breaks to whole years
+    scale_x_continuous(breaks = seq(min(year_stats_global$TargetYear), 
+                                    max(year_stats_global$TargetYear), by = 1)) +
+    
+    theme_minimal() +
+    labs(title = "Global Year Difficulty (Aggregate of All Horizons)",
+         y = "Median Prediction Loss", 
+         x = "Target Year") +
+    theme(legend.position = "right",
+          plot.title = element_text(face = "bold", size = 14),
+          axis.text.x = element_text(angle = 45, hjust = 1)) # Tilt years if they overlap
+  
+  # 3. Corrected Correlation Stat
+  cor_val <- round(cor(year_stats_global$med_loss, year_stats_global$med_bias), 3)
+  
+  # 1. Prepare the data (AGGREGATE THE STATUS QUO STORY)
+  dt_cor <- dt_paired[, .(
+    med_loss = median(FutureTainted), # FIXED: Use the Status Quo failure
+    med_bias = median(OptimismBiasPct) # Ensure this was: (Tainted - Internal) / Internal
+  ), by = .(TargetYear)]
+  
+  # 2. CALCULATE THE NEW CORRELATION (This is your new "r" value)
+  cor_val <- round(cor(dt_cor$med_loss, dt_cor$med_bias), 3)
+  
+  # 3. The "Synchronization of Risk" Plot
+  P4.2 <- ggplot(dt_cor, aes(x = med_bias, y = med_loss)) +
+    # Linear trend line
+    geom_smooth(method = "lm", color = "black", linetype = "dashed", alpha = 0.1) +
+    
+    # Main data points
+    geom_point(size = 4, aes(color = TargetYear)) + # Added color by year for visual interest
+    
+    # Clean year labels
+    geom_text_repel(aes(label = TargetYear), size = 4, 
+                    box.padding = 1.2,       
+                    point.padding = 0.5,     
+                    force = 10,              
+                    segment.color = "grey50", 
+                    segment.alpha = 0.6,      
+                    min.segment.length = 0) +
+    
+    # NEW Pearson correlation label
+    annotate("label", x = min(dt_cor$med_bias), y = max(dt_cor$med_loss), 
+             label = paste0("Pearson's r = ", cor_val),
+             fill = "white", fontface = "bold", size = 6, hjust = 0) +
+    
+    # Aesthetics
+    scale_color_viridis_c(option = "magma") + # Visualizes the progression of years
+    theme_minimal() +
+    labs(title = "Loss vs. Deception",
+         # subtitle = "Status Quo Audit: Metrics lie most exactly when the standard model fails most significantly.",
+         x = "Optimism Bias (% Underestimation of Error)", 
+         y = "Median Prediction Loss Cross-Validated Forecast") +
+    theme(legend.position = "none",
+          plot.title = element_text(face = "bold", size = 16),
+          text = element_text(size = 12),
+          axis.title = element_text(face = "bold", size = 12),
+          panel.grid.minor = element_blank())
+  
+  
+  # Testing if 2021 and 2022 were "hard years" to forecast
+  # 1. Filter for experiments that specifically targeted the final years of the dataset
+  dt_bad_luck <- dt_paired[TargetYear %in% c(2021, 2022)]
+  
+  # 2. Plot Advantage vs. Forecast Horizon for ONLY these specific target years
+  P5.1 <- ggplot(dt_bad_luck, aes(x = forecastHorizon, y = PreValAdvantage, color = as.factor(TargetYear))) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "black", linewidth = 1) +
+    
+    # Raw data points to see the spread
+    geom_point(alpha = 0.5, position = position_jitter(width = 0.1)) +
+    
+    # Loess smooth to show the trajectory of decay over distance
+    geom_smooth(method = "loess", se = TRUE, linewidth = 1.5, alpha = 0.2) +
+    
+    facet_grid(~Complexity, scales = "free_y") +
+    theme_minimal() +
+    scale_color_brewer(palette = "Set1") +
+    scale_x_continuous(breaks = seq(1, 12, by = 2)) +
+    labs(title = "Distance Decay",
+         x = "Forecast Horizon (Years into the future)", 
+         y = "PreVal Advantage (Blue - Red)",
+         color = "Target Year") +
+    theme(strip.text = element_text(face = "bold", size = 12),
+          legend.position = "bottom")
 
+  # Dimensions for a standard 16:9 slide (in inches)
+  w <- 12 
+  h <- 6.75
+  res <- 300 # Dots Per Inch (DPI)
+  
+  # Save the Faceted Optimism Bias Plot
+  ggsave(file.path(outPath, "OptimismBias_Faceted.png"), plot = P1.1, 
+         width = w, height = h, dpi = res, bg = "white")
+  
+  # Save the Synchronization Scatter Plot
+  ggsave(file.path(outPath, "Synchronization_Scatter.png"), plot = P4.2, 
+         width = 8, height = 6, dpi = res, bg = "white") 
+  
+  # Save the Global Year Difficulty Plot
+  ggsave(file.path(outPath, "GlobalYearDiff.png"), plot = P4.1, 
+         width = 8, height = 6, dpi = res, bg = "white") 
+  
+  # Save the Profitability Heatmap
+  ggsave(file.path(outPath, "Profitability_Heatmap.png"), plot = P3.1, 
+         width = w, height = h, dpi = res, bg = "white")
+  
+  # Save the Profitability Heatmap
+  ggsave(file.path(outPath, "Impact_Validation_Year.png"), plot = P3.2, 
+         width = w, height = h, dpi = res, bg = "white")
+  
+  # Save the All Years Advantage Plot
+  ggsave(file.path(outPath, "PreVal_Advantage_Timeline.png"), plot = P2.1, 
+         width = w, height = h, dpi = res, bg = "white")
+  
+  ggsave(file.path(outPath,"Density_Grid.png"), plot = P1.2, 
+         width = 16, height = 10, dpi = res, bg = "white")
+  
+  ggsave(file.path(outPath, "Check_If_Hard_years.png"), plot = P5.1, 
+         width = w, height = h, dpi = res, bg = "white")
+  
   return(list(P11 = P1.1,
               P12 = P1.2,
               P21 = P2.1,
-              P31 = P3.1))
+              P31 = P3.1,
+              P32 = P3.2,
+              P41 = P4.1,
+              P42 = P4.2,
+              P51 = P5.1,
+              corrLossBias = cor_val))
 }
-
-
