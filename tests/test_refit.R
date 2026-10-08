@@ -161,14 +161,14 @@ if (!is.null(features)) {
   theExperiment(store, sub3, manDir, fp, batchSize = 64, epoch = 2, learningRate = 0.01,
                 outputDir = file.path(out, "models4"))
   an <- analyzeExperiment(file.path(out, "models4"), file.path(out, "analysis"))
-  check(all(c("H1_reported_realized", "H1_optimism_difference", "H2_contrasts", "H2_sameInformation", "H3_penalty_vs_simplest",
+  check(all(c("H1_reported_realized", "H1_forecast_vs_reference", "H1_optimism_difference", "H2_contrasts", "H2_sameInformation", "H3_penalty_vs_simplest",
               "selection_regret", "training_behaviour", "table1_design") %in% names(an)),
         "analyzeExperiment returns the pre-specified tables")
   check(all(file.exists(file.path(out, "analysis", c("allModels.csv", "H2_contrasts.csv", "pairedContrasts_perSplit.csv", "sameInformation_perSplit.csv")))),
         "analyzeExperiment writes its files")
   check(all(is.finite(an$H2_contrasts$estimate)) && all(an$H2_contrasts$pSignFlip >= 0 & an$H2_contrasts$pSignFlip <= 1, na.rm = TRUE),
         "paired contrasts and exact sign-flip p-values are valid")
-  figs <- c("fig1_reported_vs_realized.png", "fig2_forest_contrasts.png", "fig3_complexity_curves.png", "fig4_horizon.png",
+  figs <- c("fig1_H1_cv_is_misleading.png", "fig1b_H1_per_year.png", "fig2_forest_contrasts.png", "fig3_complexity_curves.png", "fig4_horizon.png",
             "fig5_learning_curves.png", "fig6_how_training_ended.png", "fig7_same_information.png", "fig8_skill_top1.png")
   check(!requireNamespace("ggplot2", quietly = TRUE) || all(file.exists(file.path(out, "analysis", figs))),
         paste("all 8 figures written", paste(figs[!file.exists(file.path(out, "analysis", figs))], collapse = ", ")))

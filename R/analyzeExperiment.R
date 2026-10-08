@@ -60,6 +60,7 @@ analyzeExperiment <- function(modelDir, outDir, margin = 0.005, chance = log(11)
   id <- c("arm", "splitId", "complexity", "replicate", "testYear", "horizon", "windowLength")
   W <- data.table::dcast(M, stats::as.formula(paste(paste(id, collapse = " + "), "~ typeValidation")),
                          value.var = c("realized", "reported", "optimism", "skillTop1", "bestEpoch"))
+  W[, H1_forecast_minus_reference := realized_FutureTainted - realized_Internal]   # H1: forecasting with CV vs the reference CV
   W[, `:=`(PreVal_minus_Tainted = realized_FutureUnseen - realized_FutureTainted,
            PreVal_minus_Internal = realized_FutureUnseen - realized_Internal,
            optGapTainted = optimism_FutureTainted - optimism_FutureUnseen,
@@ -71,7 +72,19 @@ analyzeExperiment <- function(modelDir, outDir, margin = 0.005, chance = log(11)
                              animalsTrain = mean(nAnimalsTrain), burstsTrain = mean(nBurstsTrain),
                              animalsTest = mean(nAnimalsTest), models = .N), by = .(arm, typeValidation)]
 
-  # ---- H1: reported vs realized, optimism, and the primary contrast (difference in optimism) --------------
+  # ---- H1 (does NOT involve PreVal): is CV a misleading measure of forecast quality? -------------------------------
+  # Primary: on the identical test strata, is the loss when CV-trained models FORECAST (FutureTainted) larger than the
+  # reference CV (Internal)? Positive = forecasting is harder than the CV reference suggests.
+  # Secondary: the CV regime's own reported error against its realized forecast error (Tainted; carries the selection bias
+  # described in LIMITATIONS.md).
+  out$H1_forecast_vs_reference <- byYear(W, "H1_forecast_minus_reference", c("arm", "complexity"))
+  out$H1_forecast_vs_reference_pooled <- byYear(W, "H1_forecast_minus_reference", "arm")
+  out$H1_forecast_vs_reference_perYear <- perYear(W, "H1_forecast_minus_reference", c("arm", "complexity"))
+  out$H1_forecast_vs_reference_by_horizon <- byYear(W[, horizonBin := cut(horizon, c(0, 1, 2, 4, Inf), labels = c("1", "2", "3-4", "5+"))],
+                                                    "H1_forecast_minus_reference", c("arm", "horizonBin"))
+  out$H1_own_optimism_tainted <- byYear(M[typeValidation == "FutureTainted"], "optimism", c("arm", "complexity"))
+  out$H1_own_optimism_tainted_pooled <- byYear(M[typeValidation == "FutureTainted"], "optimism", "arm")
+  # ---- descriptive: reported vs realized for all regimes and how much more optimistic CV is than PreVal ---------------
   out$H1_reported_realized <- data.table::rbindlist(lapply(c("reported", "realized", "optimism"), function(v)
     byYear(M, v, c("arm", "typeValidation", "complexity"))[, measure := v]))
   out$H1_optimism_difference <- data.table::rbindlist(lapply(c("optGapTainted", "optGapInternal"), function(v)
@@ -212,14 +225,25 @@ analysisFigures <- function(M, W, Wl, out, modelDir, outDir, chance) {
   Mt[, regime := factor(typeValidation, names(cols), labs[names(cols)])]
   colv <- stats::setNames(cols, labs[names(cols)])
 
-  # 1. Reported vs realized: points below the 1:1 line = the regime under-reports its future error
-  save(ggplot(Mt, aes(reported, realized, colour = regime)) + geom_abline(slope = 1, intercept = 0, linetype = 2) +
-         geom_point(alpha = 0.5, size = 1) + facet_wrap(~ complexity, scales = "free", labeller = labeller(complexity = function(x) paste(x, "covariates"))) +
-         scale_colour_manual(values = colv) + thm +
-         labs(x = "Reported loss (own validation set)", y = "Realized loss (shared test set)", colour = NULL,
-              title = "Does the regime's own estimate match the future?",
-              subtitle = "Dashed line: reported = realized. Above the line = future error is worse than reported"),
-       "fig1_reported_vs_realized.png", 9, 6.5)
+  # 1. H1 (no PreVal): CV as a measure of forecast quality
+  Wt <- W[arm == "temporal"]
+  d1 <- data.table::rbindlist(list(
+    Wt[, .(panel = "A. Forecasting with CV (y) vs the reference CV (x), same test strata", x = realized_Internal, y = realized_FutureTainted, complexity)],
+    Wt[, .(panel = "B. CV's own reported error (x) vs its forecast error (y)", x = reported_FutureTainted, y = realized_FutureTainted, complexity)]))
+  save(ggplot(d1, aes(x, y, colour = factor(complexity))) + geom_abline(slope = 1, intercept = 0, linetype = 2) +
+         geom_point(alpha = 0.6, size = 1.2) + facet_wrap(~ panel, scales = "free") + thm +
+         labs(x = "Loss (lower is better)", y = "Loss when forecasting", colour = "Covariates",
+              title = "Is cross-validation a misleading measure of forecast quality?",
+              subtitle = "Dashed line: no difference. Dots above the line: forecasting is worse than what CV suggests. One dot = one split and complexity"),
+       "fig1_H1_cv_is_misleading.png", 11, 5)
+  h1y <- out$H1_forecast_vs_reference_perYear[arm == "temporal"]; h1m <- out$H1_forecast_vs_reference[arm == "temporal"]
+  save(ggplot(h1y, aes(value, factor(testYear))) + geom_vline(xintercept = 0, linetype = 2) + geom_point(alpha = 0.7) +
+         geom_errorbarh(data = h1m, aes(xmin = lo, xmax = hi, y = 0.4), inherit.aes = FALSE, height = 0.25, colour = "#B23A48") +
+         geom_point(data = h1m, aes(estimate, 0.4), inherit.aes = FALSE, shape = 18, size = 3, colour = "#B23A48") +
+         facet_wrap(~ complexity, labeller = labeller(complexity = function(x) paste(x, "covariates"))) + thm +
+         labs(x = "Forecast loss minus reference-CV loss (positive = CV is misleading)", y = "Test year",
+              title = "H1 per forecast year", subtitle = "Dots: test years. Red diamond and bar: mean and t interval across years"),
+       "fig1b_H1_per_year.png", 10, 6)
 
   # 2. Forest plot: per-test-year contrasts (PreVal minus comparator; negative = PreVal better)
   fy <- out$H2_perYear[arm == "temporal"]; fm <- out$H2_contrasts[arm == "temporal"]

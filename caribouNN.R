@@ -41,6 +41,8 @@ defineModule(sim, list(
     defineParameter("earlyStopPatience", "numeric", Inf, 1, Inf,
                     "Stop after this many epochs without a new best validation loss (Inf = never)."),
     defineParameter("zClip", "numeric", 10, 1, Inf, "Standardised covariates are clipped to +/- zClip."),
+    defineParameter("onlyMissing", "logical", FALSE, NA, NA,
+                    "Mop-up: run only the models that have no result yet (then slice them with runSlice)."),
     defineParameter("extendFrom", "numeric", NA, NA, NA,
                     paste0("If set (e.g. 50): models whose saved result stopped exactly at this epoch cap are re-trained from ",
                            "scratch with the larger `epoch` cap (same seeds); the earlier result is kept as *_finalDT_cap<N>.csv.")),
@@ -194,7 +196,7 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
           outputDir = checkPath(file.path(outputPath(sim), "testedModels"), create = TRUE),
           reRunModels = P(sim)$reRunModels, modComplex = P(sim)$modComplex, runSlice = slice,
           useGPU = P(sim)$useGPU, torchThreads = P(sim)$torchThreads, zClip = P(sim)$zClip,
-          earlyStopPatience = P(sim)$earlyStopPatience, stopOnError = P(sim)$stopOnError, extendFrom = P(sim)$extendFrom,
+          earlyStopPatience = P(sim)$earlyStopPatience, stopOnError = P(sim)$stopOnError, extendFrom = P(sim)$extendFrom, onlyMissing = P(sim)$onlyMissing,
           registryPath = file.path(outputPath(sim), "seedRegistry.csv"),
           modulePaths = c(caribouNN = file.path(modulePath(sim), "caribouNN"),
                           caribouNN_Global = file.path(modulePath(sim), "caribouNN_Global")))

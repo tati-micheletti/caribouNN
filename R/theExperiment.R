@@ -11,7 +11,7 @@ theExperiment <- function(strataStore, plan, manifestDir, featurePriority, batch
                           learningRate, outputDir, reRunModels = FALSE, modComplex = "all",
                           runSlice = NULL, useGPU = FALSE, torchThreads = 1L, zClip = 10,
                           earlyStopPatience = Inf, stopOnError = TRUE, registryPath = NULL,
-                          modulePaths = NULL, extendFrom = NA) {
+                          modulePaths = NULL, extendFrom = NA, onlyMissing = FALSE) {
   device <- if (isTRUE(useGPU) && torch::cuda_is_available()) "cuda" else "cpu"
   message("Using device: ", device)
   torch::torch_set_num_threads(as.integer(torchThreads))
@@ -21,6 +21,11 @@ theExperiment <- function(strataStore, plan, manifestDir, featurePriority, batch
   work <- data.table::copy(plan)
   if (modComplex != "all") work <- work[numberOfCovariates == as.numeric(modComplex)]
   data.table::setorder(work, -nTrainS, modelName)
+  # Mop-up mode: keep only models WITHOUT a result, then slice them, so a few leftovers are spread over many small tasks
+  if (isTRUE(onlyMissing)) {
+    work <- work[!file.exists(file.path(outputDir, paste0(modelName, "_finalDT.csv")))]
+    message(sprintf("onlyMissing: %d models have no result yet.", nrow(work)))
+  }
   if (!is.null(runSlice)) {
     stopifnot(length(runSlice) == 2, runSlice[1] >= 1, runSlice[1] <= runSlice[2])
     work <- work[(seq_len(.N) - 1L) %% runSlice[2] == (runSlice[1] - 1L)]
