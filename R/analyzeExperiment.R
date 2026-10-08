@@ -24,6 +24,7 @@ analyzeExperiment <- function(modelDir, outDir, margin = 0.005, chance = log(11)
   if (!length(files)) stop("No result files in ", modelDir)
   M <- data.table::rbindlist(lapply(files, data.table::fread), fill = TRUE)
   if (!"epochCap" %in% names(M)) M[, epochCap := 50L]            # results from before the cap was recorded
+  M[is.na(epochCap), epochCap := 50L]                             # mix of old results (no cap recorded) and newer ones
   M[, `:=`(reported = valLossBest, realized = testLossMean)]
   M[, `:=`(optimism = realized - reported, skill = chance - realized, skillTop1 = testAccuracy - 1 / 11,
            trainTestGap = realized - trainLossBest)]
