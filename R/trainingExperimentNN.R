@@ -15,12 +15,20 @@
 #' @param features covariates for this complexity level (ordered by importance)
 trainingExperimentNN <- function(store, manifest, planRow, features, batchSize, learningRate,
                                  epochs, outputDir, reRun = FALSE, device = "cpu",
-                                 zClip = 10, earlyStopPatience = Inf, verbose = TRUE) {
+                                 zClip = 10, earlyStopPatience = Inf, verbose = TRUE, extendFrom = NA) {
   modelName <- planRow$modelName
   finalPath <- file.path(outputDir, paste0(modelName, "_finalDT.csv"))
   if (!reRun && file.exists(finalPath)) {
-    message(modelName, ": results exist and reRun = FALSE; loading.")
-    return(data.table::fread(finalPath))
+    old <- data.table::fread(finalPath)
+    # Extension pass: a model that STOPPED AT THE EPOCH CAP (epochsRun == extendFrom, not stopped by patience) is
+    # re-trained from scratch with the larger cap. Same seeds -> the first epochs are identical; the earlier result is kept.
+    capBound <- !is.na(extendFrom) && "epochsRun" %in% names(old) && old$epochsRun[1] == extendFrom && epochs > extendFrom
+    if (!capBound) {
+      message(modelName, ": results exist and reRun = FALSE; loading.")
+      return(old)
+    }
+    message(modelName, ": stopped at the ", extendFrom, "-epoch cap; re-training to convergence (cap ", epochs, ").")
+    file.copy(finalPath, file.path(outputDir, paste0(modelName, "_finalDT_cap", extendFrom, ".csv")), overwrite = TRUE)
   }
   t0 <- Sys.time()
   idx <- store$index
@@ -94,7 +102,7 @@ trainingExperimentNN <- function(store, manifest, planRow, features, batchSize, 
     nAnimalsTrain = nAn(trRows), nBurstsTrain = nBu(trRows), nAnimalsTest = nAn(teRows),
     splitSeed = planRow$splitSeed, modelSeed = seed,
     trainLossBest = trLoss, valLossBest = fit$bestValLoss, bestEpoch = fit$bestEpoch,
-    epochsRun = nrow(fit$history),
+    epochsRun = nrow(fit$history), epochCap = epochs,
     testLossMean = mean(tt$loss), testLossSD = stats::sd(tt$loss), testLossSE = stats::sd(tt$loss) / sqrt(nrow(tt)),
     totalSamples = nrow(tt), correctPreds = sum(tt$correct), testAccuracy = mean(tt$correct),
     seenShare = mean(tt$seenAnimal),

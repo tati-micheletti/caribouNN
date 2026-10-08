@@ -127,7 +127,7 @@ check(all(abs(sc$pTrue - exp(-sc$loss)) < 1e-12) && all(sc$rankTrue >= 1 & sc$ra
 # ---- 4. end-to-end on the synthetic data -----------------------------------------------------------
 if (!is.null(features)) {
   store <- buildStrataStore(d, features)
-  out <- file.path(tempdir(), "refitTest"); dir.create(out, showWarnings = FALSE, recursive = TRUE)
+  out <- file.path(Sys.getenv("REFIT_TEST_OUT", tempdir()), "refitTest"); dir.create(out, showWarnings = FALSE, recursive = TRUE)
   manDir <- file.path(out, "splits"); writeManifests(des$bundles, idx, manDir)
   tmp <- des$plan[arm == "temporal"]
   au <- auditSplitManifests(idx, tmp, manDir)
@@ -160,11 +160,30 @@ if (!is.null(features)) {
   sub3 <- des$plan[arm == "temporal" & testYear >= 2016]
   theExperiment(store, sub3, manDir, fp, batchSize = 64, epoch = 2, learningRate = 0.01,
                 outputDir = file.path(out, "models4"))
-  an <- analyzeExperiment(file.path(out, "models4"), file.path(out, "analysis"), nBoot = 100L)
-  check(all(c("H1_optimism", "H2_contrasts", "H3_slope_realized", "selection_regret") %in% names(an)) &&
-          all(file.exists(file.path(out, "analysis", c("allModels.csv", "H1_optimism.csv")))),
-        "analyzeExperiment writes the pre-specified tables")
-  check(all(is.finite(an$H2_contrasts$estimate)), "paired contrasts are finite")
+  an <- analyzeExperiment(file.path(out, "models4"), file.path(out, "analysis"))
+  check(all(c("H1_reported_realized", "H1_optimism_difference", "H2_contrasts", "H2_sameInformation", "H3_penalty_vs_simplest",
+              "selection_regret", "training_behaviour", "table1_design") %in% names(an)),
+        "analyzeExperiment returns the pre-specified tables")
+  check(all(file.exists(file.path(out, "analysis", c("allModels.csv", "H2_contrasts.csv", "pairedContrasts_perSplit.csv", "sameInformation_perSplit.csv")))),
+        "analyzeExperiment writes its files")
+  check(all(is.finite(an$H2_contrasts$estimate)) && all(an$H2_contrasts$pSignFlip >= 0 & an$H2_contrasts$pSignFlip <= 1, na.rm = TRUE),
+        "paired contrasts and exact sign-flip p-values are valid")
+  figs <- c("fig1_reported_vs_realized.png", "fig2_forest_contrasts.png", "fig3_complexity_curves.png", "fig4_horizon.png",
+            "fig5_learning_curves.png", "fig6_how_training_ended.png", "fig7_same_information.png", "fig8_skill_top1.png")
+  check(!requireNamespace("ggplot2", quietly = TRUE) || all(file.exists(file.path(out, "analysis", figs))),
+        paste("all 8 figures written", paste(figs[!file.exists(file.path(out, "analysis", figs))], collapse = ", ")))
+  # exact sign-flip: 3 years, all positive -> p = 2/8
+  x <- c(1, 2, 3); sg <- as.matrix(expand.grid(rep(list(c(-1, 1)), 3))); pp <- mean(abs(sg %*% x / 3) >= abs(mean(x)) - 1e-12)
+  check(abs(pp - 0.25) < 1e-12, "sign-flip arithmetic (3 years, all positive: p = 0.25)")
+  # extension pass: a model that stopped at the cap is re-trained with the larger cap, old result kept
+  m1 <- list.files(file.path(out, "models4"), pattern = "_finalDT[.]csv$")[1]
+  nm <- sub("_finalDT.csv", "", m1); r0 <- fread(file.path(out, "models4", m1))
+  planRow <- des$plan[modelName == nm]
+  r1 <- trainingExperimentNN(store, readManifest(manDir, planRow$splitId, planRow$typeValidation), planRow, fp$Feature[seq_len(2)],
+                             batchSize = 64, learningRate = 0.01, epochs = r0$epochsRun + 3, outputDir = file.path(out, "models4"),
+                             extendFrom = r0$epochsRun)
+  check(r1$epochsRun[1] > r0$epochsRun[1] || r1$epochsRun[1] == r1$epochCap[1], "extension pass re-trains a cap-bound model")
+  check(file.exists(file.path(out, "models4", paste0(nm, "_finalDT_cap", r0$epochsRun, ".csv"))), "extension pass keeps the earlier result")
 }
 cat(sprintf("\n%d failure(s)\n", nFail))
 if (nFail) quit(status = 1)

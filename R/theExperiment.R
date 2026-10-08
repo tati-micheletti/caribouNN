@@ -11,7 +11,7 @@ theExperiment <- function(strataStore, plan, manifestDir, featurePriority, batch
                           learningRate, outputDir, reRunModels = FALSE, modComplex = "all",
                           runSlice = NULL, useGPU = FALSE, torchThreads = 1L, zClip = 10,
                           earlyStopPatience = Inf, stopOnError = TRUE, registryPath = NULL,
-                          modulePaths = NULL) {
+                          modulePaths = NULL, extendFrom = NA) {
   device <- if (isTRUE(useGPU) && torch::cuda_is_available()) "cuda" else "cpu"
   message("Using device: ", device)
   torch::torch_set_num_threads(as.integer(torchThreads))
@@ -49,7 +49,7 @@ theExperiment <- function(strataStore, plan, manifestDir, featurePriority, batch
                            planRow = pr, features = feats, batchSize = batchSize,
                            learningRate = learningRate, epochs = epoch, outputDir = outputDir,
                            reRun = reRunModels, device = device, zClip = zClip,
-                           earlyStopPatience = earlyStopPatience),
+                           earlyStopPatience = earlyStopPatience, extendFrom = extendFrom),
       error = function(e) e)
     if (inherits(res, "error")) {
       msg <- conditionMessage(res)
