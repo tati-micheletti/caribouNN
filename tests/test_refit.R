@@ -8,7 +8,7 @@ here <- if (length(fileArg)) dirname(normalizePath(sub("--file=", "", fileArg)))
 modDir <- normalizePath(file.path(here, ".."))
 globalDir <- normalizePath(file.path(modDir, "..", "caribouNN_Global"), mustWork = FALSE)
 for (f in c("stratumNet.R", "buildSplits.R", "verifySplits.R", "generateExperimentPlan.R", "strataStore.R",
-            "trainingExperimentNN.R", "theExperiment.R", "analyzeExperiment.R")) source(file.path(modDir, "R", f))
+            "trainingExperimentNN.R", "theExperiment.R", "analyzeExperiment.R", "featureSets.R")) source(file.path(modDir, "R", f))
 nFail <- 0L
 check <- function(cond, msg) {
   ok <- isTRUE(cond)
@@ -198,6 +198,33 @@ if (!is.null(features)) {
   check(identical(f0$bestEpoch, f1$bestEpoch) && isTRUE(all.equal(f0$history$valLoss, f1$history$valLoss)) &&
           all(is.na(f0$history$diagLoss)) && all(is.finite(f1$history$diagLoss)),
         "the diagnostic never changes the fit (identical best epoch and validation path)")
+
+  # ---- feature-set arm (re-ordered / ablated covariate sets) -------------------------------------------------------
+  ft <- data.table(Feature = features, Importance = 6:1)
+  fsA <- buildFeatureSets(ft, movementPattern = "^f[12]$")
+  fsB <- buildFeatureSets(ft, movementPattern = "^f[12]$")
+  check(identical(fsA, fsB), "feature sets are deterministic (seeded)")
+  check(!any(fsA[set == "habitatOnly"]$Feature %in% c("f1", "f2")) && nrow(fsA[set == "habitatOnly"]) == 4,
+        "habitatOnly removes the movement covariates (ablation)")
+  check(identical(fsA[set == "habitatFirst"]$Feature[1:4], c("f3", "f4", "f5", "f6")) &&
+          identical(fsA[set == "movementFirst"]$Feature[1:2], c("f1", "f2")), "habitatFirst / movementFirst order the families")
+  check(all(sapply(c("randomA", "randomB"), function(s) setequal(fsA[set == s]$Feature, features))) &&
+          !identical(fsA[set == "randomA"]$Feature, fsA[set == "randomB"]$Feature), "random orders are permutations and differ")
+  armPlan <- makeFeatureSetPlan(des$plan[testYear >= 2016], fsA, levels = c(2, 5, 10, 20))
+  check(all(armPlan$arm == "temporal") && setequal(unique(armPlan$typeValidation), c("FutureUnseen", "FutureTainted")) &&
+          !anyDuplicated(armPlan$modelName) && all(armPlan$numberOfCovariates <= 6),
+        "feature-set plan: temporal arm, two forecasting regimes, unique names, levels truncated to the set size")
+  check(identical(makeFeatureSetPlan(des$plan[testYear >= 2016], fsA, levels = c(2, 5, 10, 20)), armPlan),
+        "feature-set plan is reproducible (tasks rebuild it identically)")
+  sel <- armPlan[featureSet %in% c("habitatOnly", "randomA") & splitId %in% unique(splitId)[1:2]]
+  armRes <- theExperiment(store, sel, manDir, fp, batchSize = 64, epoch = 2, learningRate = 0.01,
+                          outputDir = file.path(out, "armModels"), featureSets = fsA)
+  check(nrow(armRes) == nrow(sel) && all(is.finite(armRes$testLossMean)), "feature-set models train and score")
+  prv <- readRDS(file.path(out, "armModels", paste0(sel[featureSet == "habitatOnly" & numberOfCovariates == 4]$modelName[1], "_provenance.rds")))
+  check(setequal(prv$features, c("f3", "f4", "f5", "f6")), "a habitatOnly model really uses only the habitat covariates")
+  anFs <- analyzeFeatureSets(file.path(out, "armModels"), file.path(out, "models4"), file.path(out, "analysisFs"))
+  check(all(c("levels", "penalty", "shape_per_regime") %in% names(anFs)) && file.exists(file.path(out, "analysisFs", "FS_penalty.csv")),
+        "analyzeFeatureSets writes its tables")
 }
 cat(sprintf("\n%d failure(s)\n", nFail))
 if (nFail) quit(status = 1)

@@ -11,7 +11,7 @@ theExperiment <- function(strataStore, plan, manifestDir, featurePriority, batch
                           learningRate, outputDir, reRunModels = FALSE, modComplex = "all",
                           runSlice = NULL, useGPU = FALSE, torchThreads = 1L, zClip = 10,
                           earlyStopPatience = Inf, stopOnError = TRUE, registryPath = NULL,
-                          modulePaths = NULL, extendFrom = NA, onlyMissing = FALSE) {
+                          modulePaths = NULL, extendFrom = NA, onlyMissing = FALSE, featureSets = NULL) {
   device <- if (isTRUE(useGPU) && torch::cuda_is_available()) "cuda" else "cpu"
   message("Using device: ", device)
   torch::torch_set_num_threads(as.integer(torchThreads))
@@ -47,7 +47,12 @@ theExperiment <- function(strataStore, plan, manifestDir, featurePriority, batch
   for (i in seq_len(nrow(work))) {
     pr <- work[i]
     nPick <- if (is.infinite(pr$numberOfCovariates)) nrow(featurePriority) else pr$numberOfCovariates
-    feats <- featurePriority$Feature[seq_len(min(nPick, nrow(featurePriority)))]
+    if (!is.null(featureSets) && "featureSet" %in% names(pr) && !is.na(pr$featureSet)) {   # feature-set arm: own covariate order
+      fl <- featureSets[set == pr$featureSet][order(position)]$Feature
+      feats <- fl[seq_len(min(nPick, length(fl)))]
+    } else {
+      feats <- featurePriority$Feature[seq_len(min(nPick, nrow(featurePriority)))]
+    }
     message(sprintf("[%d/%d] %s", i, nrow(work), pr$modelName))
     res <- tryCatch(
       trainingExperimentNN(store = strataStore, manifest = getManifest(pr$splitId, pr$typeValidation),

@@ -41,6 +41,14 @@ defineModule(sim, list(
     defineParameter("earlyStopPatience", "numeric", Inf, 1, Inf,
                     "Stop after this many epochs without a new best validation loss (Inf = never)."),
     defineParameter("zClip", "numeric", 10, 1, Inf, "Standardised covariates are clipped to +/- zClip."),
+    defineParameter("featureSetArm", "logical", FALSE, NA, NA,
+                    paste0("Follow-up experiment (needs a finished design in the output folder): train the status quo and PreVal with ",
+                           "re-ordered / ablated covariate sets (see R/featureSets.R) on the SAME splits. Models go to ",
+                           "testedModels_featureSets; the main experiment is not touched.")),
+    defineParameter("featureSetNames", "character", "habitatOnly,habitatFirst,movementFirst,randomA,randomB", NA, NA,
+                    "Comma-separated feature sets of the arm."),
+    defineParameter("featureSetLevels", "character", "2,5,10,20", NA, NA,
+                    "Comma-separated covariate counts of the arm (truncated to the length of each set)."),
     defineParameter("onlyMissing", "logical", FALSE, NA, NA,
                     "Mop-up: run only the models that have no result yet (then slice them with runSlice)."),
     defineParameter("extendFrom", "numeric", NA, NA, NA,
@@ -173,13 +181,29 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
         saveStrataStore(buildStrataStore(sim$preparedDataFinal, featureNames = sim$featurePriority$Feature),
                         storeDir)
       }
+      if (isTRUE(P(sim)$featureSetArm)) {
+        if (!havePlan) stop("featureSetArm needs the finished main design (plan, splits, tensor store) in ", outDir)
+        fsNames <- trimws(strsplit(P(sim)$featureSetNames, ",")[[1]])
+        fsLevels <- as.numeric(strsplit(P(sim)$featureSetLevels, ",")[[1]])
+        fsets <- buildFeatureSets(sim$featurePriority, sets = fsNames)
+        sim$experimentPlan <- makeFeatureSetPlan(sim$experimentPlan, fsets, levels = fsLevels,
+                                                 registryPath = if (is.null(slice)) file.path(outDir, "seedRegistry.csv") else NULL)
+        sim$featureSetsTable <- fsets
+        if (is.null(slice)) {   # written once by the design step; training tasks rebuild the identical plan (seeded)
+          fwrite(fsets, file.path(outDir, "featureSets.csv"))
+          fwrite(sim$experimentPlan, file.path(outDir, "experimentPlan_featureSets.csv"))
+          message(sprintf("Feature-set arm: %d models (%s; levels %s).", nrow(sim$experimentPlan),
+                          paste(fsNames, collapse = ", "), paste(fsLevels, collapse = ", ")))
+        }
+      }
       if (!P(sim)$modComplex %in% c("all", as.character(sim$experimentPlan$numberOfCovariates)))
         stop("modComplex = ", P(sim)$modComplex, ". Available: all, ",
              paste(unique(sim$experimentPlan$numberOfCovariates), collapse = ", "))
     },
     trainExperiment = {
       slice <- if (anyNA(P(sim)$runSlice)) NULL else P(sim)$runSlice
-      savedPath <- file.path(outputPath(sim), "fittedModelPaths.csv")
+      fsArm <- isTRUE(P(sim)$featureSetArm)
+      savedPath <- file.path(outputPath(sim), if (fsArm) "fittedModelPaths_featureSets.csv" else "fittedModelPaths.csv")
       if (is.null(slice) && !P(sim)$reRunModels && file.exists(savedPath) &&
           nrow(fread(savedPath)) == nrow(sim$experimentPlan)) {
         message("Final results table found; loading.")
@@ -193,7 +217,8 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
           manifestDir = file.path(outputPath(sim), "splits"),
           featurePriority = sim$featurePriority, batchSize = P(sim)$batchSize, epoch = P(sim)$epoch,
           learningRate = P(sim)$learningRate,
-          outputDir = checkPath(file.path(outputPath(sim), "testedModels"), create = TRUE),
+          outputDir = checkPath(file.path(outputPath(sim), if (fsArm) "testedModels_featureSets" else "testedModels"), create = TRUE),
+          featureSets = if (fsArm) sim$featureSetsTable else NULL,
           reRunModels = P(sim)$reRunModels, modComplex = P(sim)$modComplex, runSlice = slice,
           useGPU = P(sim)$useGPU, torchThreads = P(sim)$torchThreads, zClip = P(sim)$zClip,
           earlyStopPatience = P(sim)$earlyStopPatience, stopOnError = P(sim)$stopOnError, extendFrom = P(sim)$extendFrom, onlyMissing = P(sim)$onlyMissing,
@@ -205,6 +230,19 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
     },
     compareExperiment = {
       outDir <- outputPath(sim)
+      if (isTRUE(P(sim)$featureSetArm)) {
+        planFs <- fread(file.path(outDir, "experimentPlan_featureSets.csv"))
+        doneFs <- list.files(file.path(outDir, "testedModels_featureSets"), pattern = "_finalDT\\.csv$")
+        missingFs <- setdiff(paste0(planFs$modelName, "_finalDT.csv"), doneFs)
+        if (length(missingFs)) {
+          writeLines(missingFs, file.path(outDir, "modelsMissing_featureSets.txt"))
+          stop(length(missingFs), " feature-set models have no result (see modelsMissing_featureSets.txt).")
+        }
+        sim$modelComparisons <- analyzeFeatureSets(modelDir = file.path(outDir, "testedModels_featureSets"),
+                                                   mainDir = file.path(outDir, "testedModels"),
+                                                   outDir = file.path(outDir, "analysis_featureSets"))
+        return(invisible(sim))
+      }
       plan <- fread(file.path(outDir, "experimentPlan.csv"))
       done <- list.files(file.path(outDir, "testedModels"), pattern = "_finalDT\\.csv$")
       missing <- setdiff(paste0(plan$modelName, "_finalDT.csv"), done)
