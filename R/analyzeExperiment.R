@@ -13,6 +13,8 @@
 #' t interval, and an EXACT sign-flip permutation p-value (no bootstrap: a bootstrap over ~8 clusters is unreliable).
 #' Primary H1 contrast = difference in optimism between regimes (not "optimism > 0": the reported loss is the
 #' minimum over epochs on the set that stopped training, so every regime's optimism is biased upwards).
+#' Primary H2 contrast = paired realized-loss difference PreVal - comparator. Primary H3 test = the DIFFERENCE between
+#' regimes in the complexity slope (H3_slope_difference); each regime's own slope with the equivalence test is secondary.
 #' @param sameInfo also compute contrasts restricted to test strata of animals PreVal saw in training (reads the
 #'   per-stratum files; takes a few minutes)
 analyzeExperiment <- function(modelDir, outDir, margin = 0.005, chance = log(11), sameInfo = TRUE) {
