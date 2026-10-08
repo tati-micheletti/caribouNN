@@ -11,8 +11,7 @@ defineModule(sim, list(
   timeunit = "year",
   citation = list("citation.bib"),
   documentation = list("NEWS.md", "README.md", "caribouNN.Rmd"),
-  reqdPkgs = list("SpaDES.core (>= 3.0.4)", "ggplot2","data.table", "torch", "luz", 
-                  "future", "future.apply", "gridExtra", "ggridges", "scales", "ggrepel"),
+  reqdPkgs = list("SpaDES.core (>= 3.0.4)", "ggplot2", "data.table", "torch"),
   parameters = bindrows(
     #defineParameter("paramName", "paramClass", value, min, max, "parameter description"),
     defineParameter(".plots", "character", "screen", NA, NA,
@@ -33,41 +32,50 @@ defineModule(sim, list(
                     "Named list of seeds to use for each event (names)."),
     defineParameter(".useCache", "logical", FALSE, NA, NA,
                     "Should caching of events or module be used?"),
-    defineParameter("epoch", "numeric", 50, 10, 100, 
-                    "Epochs for the ranking model (keep low for speed)"),
-    defineParameter("batchSize", "numeric", 128, 32, 4096, 
+    defineParameter("epoch", "numeric", 50, 1, 200,
+                    "Maximum number of epochs per model (the best validation epoch is kept)."),
+    defineParameter("batchSize", "numeric", 128, 32, 4096,
                     "Batch size"),
-    defineParameter("learningRate", "numeric", 0.01, 0.001, 0.1, 
-                    paste0("Learning rate. The smaller it is, the longer it takes, but the more",
-                           " precise to find the best parameters.")),
+    defineParameter("learningRate", "numeric", 0.01, 0.0001, 0.1,
+                    "Initial learning rate; halved when the validation loss stops improving."),
+    defineParameter("earlyStopPatience", "numeric", Inf, 1, Inf,
+                    "Stop after this many epochs without a new best validation loss (Inf = never)."),
+    defineParameter("zClip", "numeric", 10, 1, Inf, "Standardised covariates are clipped to +/- zClip."),
+    defineParameter("startYear", "numeric", 2013, NA, NA, "First analysis year."),
+    defineParameter("endYear", "numeric", 2022, NA, NA, "Last year with data."),
+    defineParameter("complexityLevels", "numeric", c(2, 5, 10, Inf), NA, NA,
+                    "Numbers of covariates (Inf = all)."),
+    defineParameter("nReplicates", "numeric", 1, 1, 20,
+                    "Independent network initialisations per cell (same splits)."),
+    defineParameter("testFraction", "numeric", 0.5, 0.05, 1,
+                    "Share of the test year strata used as the shared test set (temporal arm)."),
+    defineParameter("matchAnimals", "logical", TRUE, NA, NA,
+                    paste0("If TRUE (default), Internal draws only from animals present in the ",
+                           "FutureUnseen/FutureTainted pool, so all regimes use the same animals. ",
+                           "FALSE lets Internal use every animal in its (longer) window.")),
+    defineParameter("spatialTestYears", "numeric", c(2018, 2020, 2022), NA, NA,
+                    "Test years that also get a spatial arm (spatial blocks held out in ALL regimes)."),
+    defineParameter("spatialHorizons", "numeric", 1, NA, NA, "Horizons (testYear - historyEnd) with a spatial arm."),
+    defineParameter("blockKm", "numeric", 100, 1, NA, "Spatial block size (km)."),
+    defineParameter("bufferKm", "numeric", 10, 0, NA, "Buffer around held-out blocks removed from training/validation (km)."),
+    defineParameter("nFolds", "numeric", 4, 2, NA, "Number of spatial folds."),
+    defineParameter("runSlice", "numeric", NA, NA, NA,
+                    paste0("c(taskId, nTasks) to run a share of the models in this process (SLURM array). ",
+                           "NA runs everything.")),
+    defineParameter("torchThreads", "numeric", 1, 1, NA, "Threads per process for torch."),
+    defineParameter("stopOnError", "logical", TRUE, NA, NA,
+                    "Raise an error after the run if any model failed (failures are always written to disk)."),
     defineParameter("reRunModels", "logical", FALSE, NA, NA,
-                    "Should the models be re-run?"),
-    defineParameter("rerunTraining", "logical", FALSE, NA, NA,
-                    "Should the training be re-run?"),
-    defineParameter("reRunDataset", "logical", FALSE, NA, NA,
-                    "Should the dataset saving be re-run?"),
-    defineParameter("useFuture", "logical", TRUE, NA, NA,
-                    paste0("Should the package future be used for paralellizing?",
-                          " Only worth it in large machines!")),
+                    "Should models with existing results be re-run?"),
     defineParameter("useSavedPlan", "logical", TRUE, NA, NA,
-                    paste0("Should the module use a saved plan or recreate it?")),
+                    "Use the saved plan and split manifests if they exist (never re-sample silently)."),
     defineParameter("modComplex", "character", "all", NA, NA,
-                    paste0("Which model complexity should the module run? Defaults to 'all', which",
-                           "means it will run all models. This was added to help paralellize more ",
-                           "quicky and have better control of the runs.")),
-    defineParameter("maxClu", "numeric", Inf, NA, NA,
-                    paste0("How many cores should we use at maximum?",
-                           "Deafults to all avaliable. NOTE: This may cause problems with C++ during ",
-                           "model fitting. Ideally, go about 10% less than the available number of ",
-                           "cores.")),
+                    "Run only this number of covariates ('all' runs every level)."),
     defineParameter("useGPU", "logical", FALSE, NA, NA,
-                    paste0("Using a normal machine?",
-                           "Deafults to FALSE, which uses CPU. Using a GPU, change it to 'TRUE'")),
-    defineParameter("checkSavedModels", "logical", TRUE, NA, NA,
-                    paste0("Should the module check for saved fitted models?",
-                           "Deafults to TRUE, which uses any saved model table. IMPORTANT: ",
-                           "All model files (with the exception of '*_Mod.pt' should be available in ",
-                           "the directory where the table files are pointing to."))
+                    "Use a GPU if available. CPU is the default and is what the EVE job scripts use."),
+    defineParameter("stage", "character", "all", NA, NA,
+                    paste0("'all' (design + train + analyse in one session), 'design' (plan, manifests, ",
+                           "tensor store; run once), 'train' (one SLURM task: needs runSlice), 'analyze'."))
   ),
   inputObjects = bindrows(
     expectsInput("featurePriority", "character", 
@@ -96,104 +104,115 @@ defineModule(sim, list(
 ))
 
 doEvent.caribouNN = function(sim, eventTime, eventType) {
+  stage <- P(sim)$stage
+  if (!stage %in% c("all", "design", "train", "analyze"))
+    stop("caribouNN parameter 'stage' must be one of: all, design, train, analyze.")
   switch(
     eventType,
     init = {
-      
-      # schedule future event(s)
-      sim <- scheduleEvent(sim, time(sim), "caribouNN", "prepareExperiment")
-      sim <- scheduleEvent(sim, time(sim), "caribouNN", "trainExperiment")
-      sim <- scheduleEvent(sim, time(sim), "caribouNN", "compareExperiment")
+      if (stage %in% c("all", "design", "train"))
+        sim <- scheduleEvent(sim, time(sim), "caribouNN", "prepareExperiment")
+      if (stage %in% c("all", "train"))
+        sim <- scheduleEvent(sim, time(sim), "caribouNN", "trainExperiment")
+      if (stage %in% c("all", "analyze"))
+        sim <- scheduleEvent(sim, time(sim), "caribouNN", "compareExperiment")
     },
     prepareExperiment = {
-      
-      # LOAD DATA
-      if (all(!is.null(sim$preparedData$preparedDataFinal),
-              is.null(sim$preparedDataFinal)))
-        sim$preparedDataFinal <- sim$preparedData$preparedDataFinal
-      # TODO need to make checks for the data here!
-      if (is.null(sim$preparedDataFinal))
-        stop("preparedDataFinal is NULL. Debug!")
-      
-      # 1. GENERATE EXPERIMENT PLAN
-      #TODO Make the arguments as parameters
-      experimentPlanPath <- file.path(outputPath(sim), "experimentalDesignFinal.csv")
-      if (all(P(sim)$useSavedPlan,
-              file.exists(experimentPlanPath))){
-        message("Final experiment plan found and being used...")
-        sim$experimentPlan <- fread(experimentPlanPath)
-      } else {
-        message("Final experiment plan being created...")
-        sim$experimentPlan <- generateExperimentPlan(startYear = 2008,
-                                                     endYear = 2022,
-                                                     numberOfCovariatesList = c(2, 5, 10, Inf),
-                                                     outputPath = file.path(outputPath(sim), 
-                                                                            paste0("experimentalDesign",
-                                                                                   format(Sys.Date(),
-                                                                                          "%d%b%y"),
-                                                                                   ".csv")))
-        # NOTE: in experimentPlan we need to swap 2008 for 2007 because we do not have data for 
-        # 2008, but do for 2007
-        # This way we avoid many "empty" models and are still using the same amount of years 
-        # for the analysis
-        sim$experimentPlan[trainStartYear == 2008, trainStartYear := 2007]
-        sim$experimentPlan[trainEndYear == 2008, trainEndYear := 2007]
-        sim$experimentPlan[valStartYear == 2008, valStartYear := 2007]
-        sim$experimentPlan[valEndYear == 2008, valEndYear := 2007]
-        sim$experimentPlan[testStartYear == 2008, testStartYear := 2007]
-        sim$experimentPlan[testEndYear == 2008, testEndYear := 2007]
-
-        # 2. ADD CAPPING TO CONTROL SAMPLE SIZES
-        sim$experimentPlan <- addSamplingCaps(preparedDataFinal = sim$preparedDataFinal, 
-                                              experimentPlan = sim$experimentPlan,
-                                              outDir = outputPath(sim))
-        
-        verifySamplingMath(experimentPlan = sim$experimentPlan, 
-                           preparedDataFinal = sim$preparedDataFinal, 
-                           nChecks = 250)
-        
-        # 3. SAVE THE EXPERIMENT PLAN
-        fwrite(sim$experimentPlan, experimentPlanPath)
-      }
-      
-      if (!P(sim)$modComplex %in% c("all", sim$experimentPlan$numberOfCovariates)){
-        pt <- paste(c("all", unique(experimentPlan$numberOfCovariates)), collapse = ", ")
-        stop(paste0("modComplex = ", P(sim)$modComplex,". The only available values are: ", pt))
-      }
-      
-     },
-    trainExperiment = {
-      savedModelsPath <- file.path(outputPath(sim), "fittedModelPaths.csv")
-      if (P(sim)$checkSavedModels){
-        if (file.exists(savedModelsPath)){
-          message("Final model path's table found and loading...")
-          sim$fittedModelsPaths <- fread(savedModelsPath)  
+      outDir <- outputPath(sim)
+      planPath <- file.path(outDir, "experimentPlan.csv")
+      manifestDir <- file.path(outDir, "splits")
+      storeDir <- file.path(outDir, "store")
+      slice <- if (anyNA(P(sim)$runSlice)) NULL else P(sim)$runSlice
+      havePlan <- all(P(sim)$useSavedPlan, file.exists(planPath), dir.exists(manifestDir),
+                      file.exists(file.path(storeDir, "store_meta.rds")))
+      if (havePlan) {
+        message("Saved plan, split manifests and tensor store found; using them.")
+        sim$experimentPlan <- fread(planPath)
+        if (is.null(slice)) {   # a training task skips this; the analysis stage re-verifies everything
+          meta <- readRDS(file.path(storeDir, "store_meta.rds"))
+          dp <- readRDS(file.path(outDir, "designParams.rds"))
+          au <- auditSplitManifests(meta$index, sim$experimentPlan, manifestDir, spatial = dp$spatial)
+          fwrite(au, file.path(outDir, "splitChecks_reaudit.csv"))
         }
       } else {
-        message("Final model path's table NOT found or needs overriding. Starting model experiment.")
-        sim$fittedModelsPaths <- theExperiment(preparedData = sim$preparedDataFinal, 
-                                               batchSize = P(sim)$batchSize,
-                                               epoch = P(sim)$epoch,
-                                               featurePriority = sim$featurePriority,
-                                               learningRate =  P(sim)$learningRate,
-                                               outputDir = checkPath(file.path(outputPath(sim), 
-                                                                               "testedModels"), 
-                                                                     create = TRUE),
-                                               experimentPlan = sim$experimentPlan,
-                                               reRunModels = P(sim)$reRunModels,
-                                               reRunDataset = P(sim)$reRunDataset,
-                                               modComplex = P(sim)$modComplex,
-                                               maxClu = P(sim)$maxClu,
-                                               useFuture = P(sim)$useFuture,
-                                               useGPU = P(sim)$useGPU)
-        fwrite(sim$fittedModelsPaths, savedModelsPath)
+        if (stage == "train") stop("stage = 'train' needs the output of stage = 'design' in ", outDir)
+        if (all(!is.null(sim$preparedData$preparedDataFinal), is.null(sim$preparedDataFinal)))
+          sim$preparedDataFinal <- sim$preparedData$preparedDataFinal
+        if (is.null(sim$preparedDataFinal)) stop("preparedDataFinal is NULL. Run caribouNN_Global first.")
+        message("Creating the experiment design (disjoint splits, shared test sets, spatial arm)...")
+        strataIdx <- buildStrataIndex(sim$preparedDataFinal)
+        seedFile <- file.path(outDir, "seedRegistry.csv")
+        des <- generateExperimentPlan(strataIdx,
+                                      startYear = P(sim)$startYear, endYear = P(sim)$endYear,
+                                      numberOfCovariatesList = P(sim)$complexityLevels,
+                                      nReplicates = P(sim)$nReplicates, testFraction = P(sim)$testFraction,
+                                      spatialTestYears = P(sim)$spatialTestYears,
+                                      spatialHorizons = P(sim)$spatialHorizons,
+                                      blockKm = P(sim)$blockKm, bufferKm = P(sim)$bufferKm,
+                                      nFolds = P(sim)$nFolds, matchAnimals = P(sim)$matchAnimals,
+                                      registryPath = seedFile)
+        sim$experimentPlan <- des$plan
+        writeManifests(des$bundles, strataIdx, manifestDir)
+        fwrite(des$plan, planPath)
+        fwrite(des$splitSummary, file.path(outDir, "splitSummary.csv"))
+        fwrite(des$checks, file.path(outDir, "splitChecks.csv"))
+        if (!is.null(des$skipped)) fwrite(des$skipped, file.path(outDir, "splitsSkipped.csv"))
+        spatialObj <- if (any(des$plan$arm == "spatial"))
+          assignSpatialBlocks(strataIdx, blockKm = P(sim)$blockKm, bufferKm = P(sim)$bufferKm,
+                              nFolds = P(sim)$nFolds, seed = stringSeed("spatialBlocks")) else NULL
+        saveRDS(list(spatial = spatialObj, params = P(sim)), file.path(outDir, "designParams.rds"))
+        fwrite(unique(strataIdx[, .(id, idIndex)]), file.path(outDir, "masterIdMap.csv"))
+        au <- auditSplitManifests(strataIdx, sim$experimentPlan, manifestDir, spatial = spatialObj)
+        fwrite(au, file.path(outDir, "splitChecks_reaudit.csv"))
+        message("Saving the tensor store for the training tasks...")
+        saveStrataStore(buildStrataStore(sim$preparedDataFinal, featureNames = sim$featurePriority$Feature),
+                        storeDir)
+      }
+      if (!P(sim)$modComplex %in% c("all", as.character(sim$experimentPlan$numberOfCovariates)))
+        stop("modComplex = ", P(sim)$modComplex, ". Available: all, ",
+             paste(unique(sim$experimentPlan$numberOfCovariates), collapse = ", "))
+    },
+    trainExperiment = {
+      slice <- if (anyNA(P(sim)$runSlice)) NULL else P(sim)$runSlice
+      savedPath <- file.path(outputPath(sim), "fittedModelPaths.csv")
+      if (is.null(slice) && !P(sim)$reRunModels && file.exists(savedPath) &&
+          nrow(fread(savedPath)) == nrow(sim$experimentPlan)) {
+        message("Final results table found; loading.")
+        sim$fittedModelsPaths <- fread(savedPath)
+      } else {
+        store <- loadStrataStore(file.path(outputPath(sim), "store"))
+        if (!all(sim$featurePriority$Feature %in% store$featureNames))
+          stop("featurePriority contains features that are not in the saved tensor store.")
+        sim$fittedModelsPaths <- theExperiment(
+          strataStore = store, plan = sim$experimentPlan,
+          manifestDir = file.path(outputPath(sim), "splits"),
+          featurePriority = sim$featurePriority, batchSize = P(sim)$batchSize, epoch = P(sim)$epoch,
+          learningRate = P(sim)$learningRate,
+          outputDir = checkPath(file.path(outputPath(sim), "testedModels"), create = TRUE),
+          reRunModels = P(sim)$reRunModels, modComplex = P(sim)$modComplex, runSlice = slice,
+          useGPU = P(sim)$useGPU, torchThreads = P(sim)$torchThreads, zClip = P(sim)$zClip,
+          earlyStopPatience = P(sim)$earlyStopPatience, stopOnError = P(sim)$stopOnError,
+          registryPath = file.path(outputPath(sim), "seedRegistry.csv"),
+          modulePaths = c(caribouNN = file.path(modulePath(sim), "caribouNN"),
+                          caribouNN_Global = file.path(modulePath(sim), "caribouNN_Global")))
+        if (is.null(slice)) fwrite(sim$fittedModelsPaths, savedPath)
       }
     },
     compareExperiment = {
-      
-      sim$modelComparisons <- plotModels(fittedTable = sim$fittedModelsPaths, 
-                                         outPath = outputPath(sim))
-      
+      outDir <- outputPath(sim)
+      plan <- fread(file.path(outDir, "experimentPlan.csv"))
+      done <- list.files(file.path(outDir, "testedModels"), pattern = "_finalDT\\.csv$")
+      missing <- setdiff(paste0(plan$modelName, "_finalDT.csv"), done)
+      if (length(missing)) {
+        writeLines(missing, file.path(outDir, "modelsMissing.txt"))
+        stop(length(missing), " models have no result (see modelsMissing.txt). Run or resubmit stage 'train'.")
+      }
+      meta <- readRDS(file.path(outDir, "store", "store_meta.rds"))
+      dp <- readRDS(file.path(outDir, "designParams.rds"))
+      au <- auditSplitManifests(meta$index, plan, file.path(outDir, "splits"), spatial = dp$spatial)
+      fwrite(au, file.path(outDir, "splitChecks_final.csv"))
+      sim$modelComparisons <- analyzeExperiment(modelDir = file.path(outDir, "testedModels"),
+                                                outDir = file.path(outDir, "analysis"))
     },
     warning(noEventWarning(sim))
   )
@@ -201,15 +220,17 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
 }
 
 .inputObjects <- function(sim) {
-  
   dPath <- asPath(getOption("reproducible.destinationPath", dataPath(sim)), 1)
   message(currentModule(sim), ": using dataPath '", dPath, "'.")
-  if (!suppliedElsewhere("preparedDataFinal", sim = sim)){
-    if(!suppliedElsewhere("extractedVariables", sim = sim))
-      stop("No defaults have been implemented yet...Please run caribouNN_Gobal")
+  stage <- P(sim)$stage
+  if (!suppliedElsewhere("featurePriority", sim = sim)) {
+    ft <- file.path(outputPath(sim), "featureTable.csv")
+    if (!file.exists(ft))
+      stop("featurePriority not supplied and ", ft, " not found. Run caribouNN_Global first.")
+    sim$featurePriority <- fread(ft)
   }
-  if (!suppliedElsewhere("featurePriority", sim = sim)){
-    sim$featurePriority <- fread("inputs/featureTable.csv")
-  }
+  if (stage %in% c("all", "design") && !suppliedElsewhere("preparedData", sim = sim) &&
+      !suppliedElsewhere("preparedDataFinal", sim = sim))
+    stop("No defaults have been implemented yet... Please run caribouNN_Global.")
   return(invisible(sim))
 }
