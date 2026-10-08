@@ -176,6 +176,62 @@ analyzeExperiment <- function(modelDir, outDir, margin = 0.005, chance = log(11)
     }
     if (length(txt)) writeLines(txt, file.path(outDir, "mixed_models.txt"))
   }
+  # ---- H3 v2: SHAPE of the complexity curve (amendment after the first look at the data; see ANALYSIS_PLAN.md) ------------
+  # The straight-line slope on log2(covariates) cannot see a curve that rises and then falls. Two numbers per split,
+  # paired within the split, are used instead: END = loss(most complex) - loss(simplest); PEAK = mean loss of the
+  # intermediate levels - loss(simplest) (the worst part of the ladder). Compared between regimes within the split.
+  lv <- sort(unique(M$complexity)); kmin <- as.character(min(lv)); kmax <- as.character(max(lv))
+  kmid <- as.character(setdiff(lv, c(min(lv), max(lv))))
+  if (length(lv) >= 3) {
+    wd <- data.table::dcast(M, arm + typeValidation + splitId + replicate + testYear + horizon ~ complexity, value.var = "realized")
+    wd[, end := get(kmax) - get(kmin)]
+    wd[, peak := rowMeans(.SD) - get(kmin), .SDcols = kmid]
+    wd[, horizonBin := cut(horizon, c(0, 1, 2, 4, Inf), labels = c("1", "2", "3-4", "5+"))]
+    out$H3_shape_per_regime <- data.table::rbindlist(lapply(c("end", "peak"), function(v)
+      byYear(wd, v, c("arm", "typeValidation"))[, measure := v]))
+    out$H3_shape_per_regime_splitSummary <- wd[, .(endMedian = stats::median(end), endMean = mean(end), endShareAbove0 = mean(end > 0),
+                                                   peakMedian = stats::median(peak), peakMean = mean(peak), peakShareAbove0 = mean(peak > 0),
+                                                   nSplits = .N), by = .(arm, typeValidation)]
+    out$H3_shape_by_horizon <- wd[, .(endMedian = stats::median(end), peakMedian = stats::median(peak), nSplits = .N),
+                                  by = .(arm, typeValidation, horizonBin)][order(arm, typeValidation, horizonBin)]
+    sh <- data.table::dcast(wd, arm + splitId + replicate + testYear + horizonBin ~ typeValidation, value.var = c("end", "peak"))
+    if (all(c("end_FutureUnseen", "end_FutureTainted", "end_Internal") %in% names(sh))) {
+      sh[, `:=`(end_PreVal_minus_Tainted = end_FutureUnseen - end_FutureTainted, end_PreVal_minus_Internal = end_FutureUnseen - end_Internal,
+                peak_PreVal_minus_Tainted = peak_FutureUnseen - peak_FutureTainted, peak_PreVal_minus_Internal = peak_FutureUnseen - peak_Internal)]
+      out$H3_shape_difference <- data.table::rbindlist(lapply(c("end_PreVal_minus_Tainted", "end_PreVal_minus_Internal",
+                                                                "peak_PreVal_minus_Tainted", "peak_PreVal_minus_Internal"), function(v)
+        byYear(sh, v, "arm")[, contrast := v]))
+      out$H3_shape_difference_by_horizon <- data.table::rbindlist(lapply(c("end_PreVal_minus_Tainted", "peak_PreVal_minus_Tainted"), function(v)
+        sh[, .(median = stats::median(get(v)), mean = mean(get(v)), shareNegative = mean(get(v) < 0), nSplits = .N), by = .(arm, horizonBin)][, contrast := v]))
+    }
+    # paired penalty per split relative to the simplest model (for the figure)
+    pl <- data.table::melt(wd, id.vars = c("arm", "typeValidation", "splitId", "replicate", "testYear", "horizon", "horizonBin"),
+                           measure.vars = as.character(lv), variable.name = "complexity", value.name = "loss")
+    pl[, complexity := as.numeric(as.character(complexity))]
+    pl[, penalty := loss - loss[which.min(complexity)], by = .(arm, typeValidation, splitId, replicate)]
+    out$H3_penalty_perSplit <- pl
+    # mixed models on all splits (partial pooling across test years): regime x complexity interaction = difference in penalty
+    if (requireNamespace("lme4", quietly = TRUE)) {
+      mixedRows <- list()
+      for (cmp in c("FutureTainted", "Internal")) {
+        d <- M[arm == "temporal" & typeValidation %in% c("FutureUnseen", cmp)]
+        if (uniqueN(d$testYear) < 3 || uniqueN(d$splitId) < 10) next
+        d[, `:=`(regime = factor(typeValidation, c("FutureUnseen", cmp), c("PreVal", "Comparator")), k = factor(complexity))]
+        fit <- tryCatch(lme4::lmer(realized ~ regime * k + (1 | testYear) + (1 | splitId), data = d), error = function(e) NULL)
+        if (is.null(fit)) next
+        cf <- summary(fit)$coefficients; x <- cf[grepl("regimeComparator:k", rownames(cf)), , drop = FALSE]
+        mixedRows[[cmp]] <- data.table::data.table(comparator = cmp, term = rownames(x), estimate = x[, 1], lo = x[, 1] - 1.96 * x[, 2],
+                                                   hi = x[, 1] + 1.96 * x[, 2], z = x[, 3])
+        # endpoint penalty by horizon
+        d2 <- d[complexity %in% c(min(lv), max(lv))][, `:=`(k2 = factor(complexity), hz = horizon - 1)]
+        fit2 <- tryCatch(lme4::lmer(realized ~ regime * k2 * hz + (1 | testYear) + (1 | splitId), data = d2), error = function(e) NULL)
+        if (!is.null(fit2)) { cf2 <- summary(fit2)$coefficients
+          mixedRows[[paste0(cmp, "_horizon")]] <- data.table::data.table(comparator = paste0(cmp, " (endpoint x horizon)"), term = rownames(cf2),
+                                                                         estimate = cf2[, 1], lo = cf2[, 1] - 1.96 * cf2[, 2], hi = cf2[, 1] + 1.96 * cf2[, 2], z = cf2[, 3]) }
+      }
+      if (length(mixedRows)) out$H3_mixed_interactions <- data.table::rbindlist(mixedRows)
+    }
+  }
   for (nm in names(out)) data.table::fwrite(out[[nm]], file.path(outDir, paste0(nm, ".csv")))
   if (requireNamespace("ggplot2", quietly = TRUE)) tryCatch(analysisFigures(M, W, Wl, out, modelDir, outDir, chance),
                                                             error = function(e) message("Figures failed: ", conditionMessage(e)))
@@ -315,6 +371,24 @@ analysisFigures <- function(M, W, Wl, out, modelDir, outDir, chance) {
            labs(x = "Difference in test loss on animals PreVal saw in training", y = "Test year",
                 title = "Same-information comparison", subtitle = "Only test strata of animals present in PreVal's training set"),
          "fig7_same_information.png", 11, 6.5)
+  }
+
+
+  # 9. Paired penalty curves: loss minus the same split's simplest-model loss (removes between-split differences)
+  if (!is.null(out$H3_penalty_perSplit)) {
+    pp <- out$H3_penalty_perSplit[arm == "temporal"]
+    pp <- data.table::rbindlist(list(data.table::copy(pp)[, panel := "All horizons"], data.table::copy(pp)[, panel := paste("Horizon", horizonBin)]), fill = TRUE)
+    pp[, panel := factor(panel, c("All horizons", paste("Horizon", c("1", "2", "3-4", "5+"))))]
+    pp[, regime := factor(typeValidation, names(cols), labs[names(cols)])]
+    ps <- pp[, .(med = stats::median(penalty), q25 = stats::quantile(penalty, .25), q75 = stats::quantile(penalty, .75)), by = .(panel, regime, complexity)]
+    save(ggplot(ps, aes(complexity, med, colour = regime, fill = regime)) + geom_hline(yintercept = 0, linetype = 2) +
+           geom_ribbon(aes(ymin = q25, ymax = q75), alpha = 0.12, colour = NA) + geom_line(linewidth = 1.1) + geom_point(size = 2.5) +
+           facet_wrap(~ panel, nrow = 1) + scale_colour_manual(values = colv) + scale_fill_manual(values = colv) +
+           scale_x_continuous(breaks = sort(unique(ps$complexity))) + thm +
+           labs(x = "Number of covariates", y = "Loss minus the same split's loss with the fewest covariates",
+                title = "Does adding covariates hurt? Paired within each split",
+                subtitle = "Line: median across splits. Band: middle 50% of splits. Above 0 = worse than the simplest model"),
+         "fig9_paired_penalty_curves.png", 13, 4.8)
   }
 
   # 8. Absolute usefulness
