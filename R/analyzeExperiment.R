@@ -162,6 +162,14 @@ analyzeExperiment <- function(modelDir, outDir, margin = 0.005, chance = log(11)
   # ---- Absolute usefulness ----------------------------------------------------------------------------------------------------
   out$skill <- byYear(M, "skill", c("arm", "typeValidation", "complexity"))
   out$skill_top1 <- byYear(M, "skillTop1", c("arm", "typeValidation", "complexity"))
+  # Top-1 hit rate above chance (1/11) per regime: mean across test years, t interval and exact sign-flip test against 0
+  # (the independent unit is the test year, as everywhere else). Paired difference PreVal - status quo on identical test strata.
+  if (all(c("FutureUnseen", "FutureTainted") %in% M$typeValidation)) {
+    tw <- data.table::dcast(M, arm + splitId + complexity + replicate + testYear ~ typeValidation, value.var = "skillTop1")
+    tw[, top1_PreVal_minus_Tainted := FutureUnseen - FutureTainted]
+    out$H2_skill_top1_contrast <- byYear(tw, "top1_PreVal_minus_Tainted", c("arm", "complexity"))
+    out$H2_skill_top1_contrast_pooled <- byYear(tw, "top1_PreVal_minus_Tainted", "arm")
+  }
 
   # ---- Mixed model on the split-level contrasts (needs lme4; run it locally if EVE lacks it) ---------------------------
   if (requireNamespace("lme4", quietly = TRUE) && uniqueN(Wl$testYear) >= 3) {
@@ -303,17 +311,17 @@ analysisFigures <- function(M, W, Wl, out, modelDir, outDir, chance) {
        "fig1b_H1_per_year.png", 10, 6)
 
   # 2. Forest plot: per-test-year contrasts (PreVal minus comparator; negative = PreVal better)
-  fy <- out$H2_perYear[arm == "temporal"]; fm <- out$H2_contrasts[arm == "temporal"]
-  fy[, cLabel := ifelse(contrast == "PreVal_minus_Tainted", "PreVal - Status quo", "PreVal - Random CV")]
-  fm[, cLabel := ifelse(contrast == "PreVal_minus_Tainted", "PreVal - Status quo", "PreVal - Random CV")]
+  # Random CV (Internal) is a leaky reference, not a forecast: PreVal is only ever compared with another forecasting regime.
+  fy <- out$H2_perYear[arm == "temporal" & contrast == "PreVal_minus_Tainted"]; fm <- out$H2_contrasts[arm == "temporal" & contrast == "PreVal_minus_Tainted"]
+  fy[, cLabel := "PreVal - Status quo"]; fm[, cLabel := "PreVal - Status quo"]
   save(ggplot(fy, aes(value, factor(testYear))) + geom_vline(xintercept = 0, linetype = 2) + geom_point(alpha = 0.7) +
          geom_errorbarh(data = fm, aes(xmin = lo, xmax = hi, y = 0.4), inherit.aes = FALSE, height = 0.25, colour = "#1F6FB5") +
          geom_point(data = fm, aes(estimate, 0.4), inherit.aes = FALSE, shape = 18, size = 3, colour = "#1F6FB5") +
-         facet_grid(cLabel ~ complexity, labeller = labeller(complexity = function(x) paste(x, "covariates"))) + thm +
+         facet_wrap(~ complexity, nrow = 1, labeller = labeller(complexity = function(x) paste(x, "covariates"))) + thm +
          labs(x = "Difference in realized test loss (negative = PreVal better)", y = "Test year",
-              title = "PreVal vs the comparators, one dot per test year",
+              title = "PreVal vs the status quo (both forecast the same test year), one dot per test year",
               subtitle = "Blue diamond and bar: mean and t interval across test years (paired on identical test strata)"),
-       "fig2_forest_contrasts.png", 11, 6.5)
+       "fig2_forest_contrasts.png", 11, 3.8)
 
   # 3. Complexity curves relative to the simplest model, one thin line per test year
   cp <- Mt[, .(v = mean(realized)), by = .(regime, complexity, testYear)]
@@ -330,13 +338,13 @@ analysisFigures <- function(M, W, Wl, out, modelDir, outDir, chance) {
        "fig3_complexity_curves.png", 10, 4.5)
 
   # 4. Contrast against forecast horizon
-  Wh <- Wl[arm == "temporal"]; Wh[, cLabel := ifelse(contrast == "PreVal_minus_Tainted", "PreVal - Status quo", "PreVal - Random CV")]
+  Wh <- Wl[arm == "temporal" & contrast == "PreVal_minus_Tainted"]; Wh[, cLabel := "PreVal - Status quo"]
   save(ggplot(Wh, aes(horizon, diff)) + geom_hline(yintercept = 0, linetype = 2) + geom_jitter(width = 0.1, alpha = 0.25, size = 0.8) +
          geom_smooth(method = "lm", formula = y ~ x, colour = "#1F6FB5", se = TRUE) + facet_wrap(~ cLabel) + thm +
          scale_x_continuous(breaks = 1:10) +
          labs(x = "Forecast horizon (test year minus last history year)", y = "Difference in realized test loss",
               title = "Does the PreVal advantage depend on how far ahead we forecast?"),
-       "fig4_horizon.png", 9, 4.5)
+       "fig4_horizon.png", 6, 4.5)
 
   # 5. Learning curves of example models (largest split, most covariates) + how training ended
   ex <- Mt[arm == "temporal"][which.max(nTrain)]
@@ -355,7 +363,7 @@ analysisFigures <- function(M, W, Wl, out, modelDir, outDir, chance) {
   tb <- data.table::melt(tb, id.vars = "regime")
   save(ggplot(tb, aes(regime, value, fill = variable)) + geom_col() + thm + scale_fill_manual(values = c("grey60", "grey85")) +
          labs(x = NULL, y = "Share of models", fill = NULL, title = "How did training end?",
-              subtitle = "After the extension pass no model should be stopped by the cap") + theme(axis.text.x = element_text(angle = 15, hjust = 1)),
+              subtitle = "Dark: training hit the epoch cap while validation loss was still improving") + theme(axis.text.x = element_text(angle = 15, hjust = 1)),
        "fig6_how_training_ended.png", 7, 4)
 
   # 6b. Diagnostic of WHY the status quo overfits: validation loss vs the future-year (test) loss after every epoch.
@@ -383,17 +391,16 @@ analysisFigures <- function(M, W, Wl, out, modelDir, outDir, chance) {
 
   # 7. Same-information contrasts
   if (!is.null(out$H2_sameInformation_perYear)) {
-    sy <- out$H2_sameInformation_perYear[arm == "temporal" & grepl("_seen", contrast)]
-    sm <- out$H2_sameInformation[arm == "temporal" & grepl("_seen", contrast)]
-    sy[, cLabel := ifelse(grepl("Tainted", contrast), "PreVal - Status quo", "PreVal - Random CV")]
-    sm[, cLabel := ifelse(grepl("Tainted", contrast), "PreVal - Status quo", "PreVal - Random CV")]
+    sy <- out$H2_sameInformation_perYear[arm == "temporal" & contrast == "dTainted_seen"]
+    sm <- out$H2_sameInformation[arm == "temporal" & contrast == "dTainted_seen"]
+    sy[, cLabel := "PreVal - Status quo"]; sm[, cLabel := "PreVal - Status quo"]
     save(ggplot(sy, aes(value, factor(testYear))) + geom_vline(xintercept = 0, linetype = 2) + geom_point(alpha = 0.7) +
            geom_errorbarh(data = sm, aes(xmin = lo, xmax = hi, y = 0.4), inherit.aes = FALSE, height = 0.25, colour = "#1F6FB5") +
            geom_point(data = sm, aes(estimate, 0.4), inherit.aes = FALSE, shape = 18, size = 3, colour = "#1F6FB5") +
-           facet_grid(cLabel ~ complexity, labeller = labeller(complexity = function(x) paste(x, "covariates"))) + thm +
-           labs(x = "Difference in test loss on animals PreVal saw in training", y = "Test year",
+           facet_wrap(~ complexity, nrow = 1, labeller = labeller(complexity = function(x) paste(x, "covariates"))) + thm +
+           labs(x = "Difference in test loss on animals PreVal saw in training (negative = PreVal better)", y = "Test year",
                 title = "Same-information comparison", subtitle = "Only test strata of animals present in PreVal's training set"),
-         "fig7_same_information.png", 11, 6.5)
+         "fig7_same_information.png", 11, 3.8)
   }
 
 
@@ -416,11 +423,15 @@ analysisFigures <- function(M, W, Wl, out, modelDir, outDir, chance) {
 
   # 8. Absolute usefulness
   sk <- Mt[, .(v = mean(skillTop1)), by = .(regime, complexity, testYear)]
+  ski <- out$skill_top1[arm == "temporal"]; ski[, regime := factor(typeValidation, names(cols), labs[names(cols)])]
   save(ggplot(sk, aes(factor(complexity), v, colour = regime)) + geom_hline(yintercept = 0, linetype = 2) +
-         geom_point(alpha = 0.4, position = position_dodge(0.5)) +
-         stat_summary(fun = mean, geom = "point", size = 3, shape = 18, position = position_dodge(0.5)) +
+         geom_point(alpha = 0.35, position = position_dodge(0.6)) +
+         geom_errorbar(data = ski, aes(x = factor(complexity), ymin = lo, ymax = hi, colour = regime), inherit.aes = FALSE,
+                       width = 0.25, linewidth = 0.9, position = position_dodge(0.6)) +
+         geom_point(data = ski, aes(x = factor(complexity), y = estimate, colour = regime), inherit.aes = FALSE, size = 3, shape = 18,
+                    position = position_dodge(0.6)) +
          scale_colour_manual(values = colv) + thm +
          labs(x = "Number of covariates", y = "Top-1 accuracy minus chance (1/11)", colour = NULL,
-              title = "How much does the model actually know?", subtitle = "Dots: test years. Diamonds: mean. 0 = guessing"),
+              title = "How much does the model actually know?", subtitle = "Dots: test years. Diamonds, bars: mean and t interval across years. Above 0 = better than guessing"),
        "fig8_skill_top1.png", 8, 4.5)
 }
