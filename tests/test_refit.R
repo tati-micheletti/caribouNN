@@ -172,6 +172,8 @@ if (!is.null(features)) {
             "fig5_learning_curves.png", "fig6_how_training_ended.png", "fig7_same_information.png", "fig8_skill_top1.png")
   check(!requireNamespace("ggplot2", quietly = TRUE) || all(file.exists(file.path(out, "analysis", figs))),
         paste("all 8 figures written", paste(figs[!file.exists(file.path(out, "analysis", figs))], collapse = ", ")))
+  check(!requireNamespace("ggplot2", quietly = TRUE) || file.exists(file.path(out, "analysis", "fig10_validation_vs_future_per_epoch.png")) ||
+          !file.exists(file.path(out, "analysis", "fig6_how_training_ended.png")), "per-epoch validation-vs-future diagnostic figure written")
   # exact sign-flip: 3 years, all positive -> p = 2/8
   x <- c(1, 2, 3); sg <- as.matrix(expand.grid(rep(list(c(-1, 1)), 3))); pp <- mean(abs(sg %*% x / 3) >= abs(mean(x)) - 1e-12)
   check(abs(pp - 0.25) < 1e-12, "sign-flip arithmetic (3 years, all positive: p = 0.25)")
@@ -184,6 +186,18 @@ if (!is.null(features)) {
                              extendFrom = r0$epochsRun)
   check(r1$epochsRun[1] > r0$epochsRun[1] || r1$epochsRun[1] == r1$epochCap[1], "extension pass re-trains a cap-bound model")
   check(file.exists(file.path(out, "models4", paste0(nm, "_finalDT_cap", r0$epochsRun, ".csv"))), "extension pass keeps the earlier result")
+  # per-epoch test-loss diagnostic: logged for every epoch, and it does not change the fit
+  h <- fread(file.path(out, "models4", paste0(nm, "_history.csv")))
+  check("diagLoss" %in% names(h) && all(is.finite(h$diagLoss)), "history logs the per-epoch test loss (diagnostic)")
+  torch::torch_manual_seed(1)
+  xa <- torch::torch_randn(120, 11, 3); ia <- torch::torch_tensor(sample(1:6, 120, TRUE), dtype = torch::torch_long())
+  xv <- torch::torch_randn(40, 11, 3);  iv <- torch::torch_tensor(sample(1:6, 40, TRUE), dtype = torch::torch_long())
+  xd <- torch::torch_randn(40, 11, 3);  id <- torch::torch_tensor(sample(1:6, 40, TRUE), dtype = torch::torch_long())
+  f0 <- fitStratumNet(xa, ia, xv, iv, nAnimals = 6L, lr = 0.01, epochs = 6, seed = 7, verbose = FALSE)
+  f1 <- fitStratumNet(xa, ia, xv, iv, nAnimals = 6L, lr = 0.01, epochs = 6, seed = 7, verbose = FALSE, diag = list(x = xd, id = id))
+  check(identical(f0$bestEpoch, f1$bestEpoch) && isTRUE(all.equal(f0$history$valLoss, f1$history$valLoss)) &&
+          all(is.na(f0$history$diagLoss)) && all(is.finite(f1$history$diagLoss)),
+        "the diagnostic never changes the fit (identical best epoch and validation path)")
 }
 cat(sprintf("\n%d failure(s)\n", nFail))
 if (nFail) quit(status = 1)

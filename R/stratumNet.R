@@ -149,10 +149,13 @@ scoreStrata <- function(net, x, id, trainIdsSeen, nAnimals, chunk = 4096L) {
 
 #' Fit the network. Early stopping/LR scheduling monitor the validation loss (mean over ALL
 #' validation strata, no dropped batches). The best-epoch weights are kept and loaded back.
+#' @param diag optional list(x, id) of strata scored after EVERY epoch and logged as `diagLoss` in the history.
+#'   DIAGNOSTIC ONLY: it never enters early stopping, LR scheduling or model selection (scoring uses eval mode, no RNG,
+#'   so the fit is identical with and without it).
 #' @return list(net, bestState, history, bestEpoch, bestValLoss, trainIdsSeen)
 fitStratumNet <- function(xTr, idTr, xVal, idVal, nAnimals, lr, epochs, batchSize = 128L,
                           seed, device = "cpu", patience = 2L, factor = 0.5, minLr = 1e-6,
-                          threshold = 1e-4, earlyStopPatience = Inf, verbose = TRUE) {
+                          threshold = 1e-4, earlyStopPatience = Inf, verbose = TRUE, diag = NULL) {
   torch::torch_manual_seed(seed)
   Net <- makeStratumNet()
   net <- Net(nIn = xTr$size(3), nAnimals = nAnimals)$to(device = device)
@@ -178,6 +181,7 @@ fitStratumNet <- function(xTr, idTr, xVal, idVal, nAnimals, lr, epochs, batchSiz
       runLoss <- runLoss + loss$item() * (z - a + 1L)
     }
     valLoss <- mean(scoreStrata(net, xVal, idVal, trainIdsSeen, nAnimals)$loss)
+    diagLoss <- if (is.null(diag)) NA_real_ else mean(scoreStrata(net, diag$x, diag$id, trainIdsSeen, nAnimals)$loss)
     improved <- is.finite(valLoss) && valLoss < bestVal * (1 - threshold)
     if (improved) {
       bestVal <- valLoss; bestEpoch <- ep; bad <- 0L; sinceBest <- 0L
@@ -190,7 +194,7 @@ fitStratumNet <- function(xTr, idTr, xVal, idVal, nAnimals, lr, epochs, batchSiz
       for (g in seq_along(opt$param_groups)) opt$param_groups[[g]]$lr <- curLr
       bad <- 0L
     }
-    history[[ep]] <- data.frame(epoch = ep, trainLoss = runLoss / n, valLoss = valLoss,
+    history[[ep]] <- data.frame(epoch = ep, trainLoss = runLoss / n, valLoss = valLoss, diagLoss = diagLoss,
                                 lr = curLr, isBest = improved,
                                 seconds = as.numeric(difftime(Sys.time(), t0, units = "secs")))
     if (verbose) message(sprintf("epoch %d/%d train %.4f val %.4f lr %.2e%s", ep, epochs,

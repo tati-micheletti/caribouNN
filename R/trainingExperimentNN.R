@@ -51,7 +51,8 @@ trainingExperimentNN <- function(store, manifest, planRow, features, batchSize, 
   seed <- planRow$modelSeed
   fit <- fitStratumNet(tr$x, tr$id, va$x, va$id, nAnimals = store$nAnimals, lr = learningRate,
                        epochs = epochs, batchSize = batchSize, seed = seed, device = device,
-                       earlyStopPatience = earlyStopPatience, verbose = verbose)
+                       earlyStopPatience = earlyStopPatience, verbose = verbose,
+                       diag = list(x = te$x, id = te$id)) # test loss per epoch: logged for diagnosis, never used for stopping/selection
   weightsPath <- file.path(outputDir, paste0(modelName, "_BW.pt"))
   checkWeightsRoundTrip(fit$bestState, weightsPath, nIn = length(features), nAnimals = store$nAnimals,
                         xVal = va$x, idVal = va$id, trainIdsSeen = fit$trainIdsSeen,

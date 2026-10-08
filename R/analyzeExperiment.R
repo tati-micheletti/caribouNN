@@ -358,6 +358,29 @@ analysisFigures <- function(M, W, Wl, out, modelDir, outDir, chance) {
               subtitle = "After the extension pass no model should be stopped by the cap") + theme(axis.text.x = element_text(angle = 15, hjust = 1)),
        "fig6_how_training_ended.png", 7, 4)
 
+  # 6b. Diagnostic of WHY the status quo overfits: validation loss vs the future-year (test) loss after every epoch.
+  # Only models trained after the diagnostic was added have `diagLoss`; it is never used for stopping or selection.
+  hd <- data.table::rbindlist(lapply(seq_len(nrow(Mt)), function(i) {
+    f <- file.path(modelDir, paste0(Mt$modelName[i], "_history.csv")); if (!file.exists(f)) return(NULL)
+    h <- data.table::fread(f); if (!"diagLoss" %in% names(h) || all(is.na(h$diagLoss))) return(NULL)
+    h[, .(epoch, valLoss, diagLoss, regime = Mt$regime[i], complexity = Mt$complexity[i], bestEpoch = Mt$bestEpoch[i], modelName = Mt$modelName[i])]
+  }))
+  if (nrow(hd)) {
+    hd[, `:=`(val = valLoss - valLoss[1], test = diagLoss - diagLoss[1]), by = modelName]
+    hs <- hd[, .(val = mean(val), test = mean(test), nModels = .N, shareStillRunning = .N / uniqueN(modelName)), by = .(regime, complexity, epoch)]
+    hs <- hs[nModels >= 10]
+    data.table::fwrite(hs, file.path(outDir, "epoch_diagnostic_val_vs_test.csv"))
+    hl <- data.table::melt(hs, id.vars = c("regime", "complexity", "epoch"), measure.vars = c("val", "test"), variable.name = "set", value.name = "change")
+    hl[, set := factor(set, c("val", "test"), c("Validation (what early stopping sees)", "Future year (what we care about)"))]
+    save(ggplot(hl, aes(epoch, change, colour = set)) + geom_hline(yintercept = 0, linetype = 2) + geom_line(linewidth = 1) +
+           facet_grid(complexity ~ regime, labeller = labeller(complexity = function(x) paste(x, "cov."))) + thm +
+           scale_colour_manual(values = c("grey30", "#B23A48")) +
+           labs(x = "Epoch", y = "Loss relative to epoch 1 (mean over models)", colour = NULL,
+                title = "Does the validation loss keep improving while the future-year loss gets worse?",
+                subtitle = "If the red line rises while the grey line falls, validation cannot see what hurts the forecast"),
+         "fig10_validation_vs_future_per_epoch.png", 11, 8)
+  }
+
   # 7. Same-information contrasts
   if (!is.null(out$H2_sameInformation_perYear)) {
     sy <- out$H2_sameInformation_perYear[arm == "temporal" & grepl("_seen", contrast)]
