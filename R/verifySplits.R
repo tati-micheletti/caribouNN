@@ -108,6 +108,8 @@ verifyModelManifest <- function(strataIdx, manifest, regime, s, e, testYear, exp
     if (!(all(yr[tr] >= s & yr[tr] <= e - 1L) && all(yr[va] == e))) stop("FutureUnseen year rules violated")
   } else if (regime == "FutureTainted") {
     if (!all(yr[c(tr, va)] >= s & yr[c(tr, va)] <= e)) stop("FutureTainted year rules violated")
+  } else if (regime == "FutureTaintedSpatial") {
+    if (!all(yr[c(tr, va)] >= s & yr[c(tr, va)] <= e)) stop("FutureTaintedSpatial year rules violated")
   } else if (regime == "Internal") {
     if (!all(yr[c(tr, va)] >= s & yr[c(tr, va)] <= testYear)) stop("Internal year rules violated")
   } else stop("Unknown regime: ", regime)

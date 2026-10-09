@@ -41,6 +41,9 @@ defineModule(sim, list(
     defineParameter("earlyStopPatience", "numeric", Inf, 1, Inf,
                     "Stop after this many epochs without a new best validation loss (Inf = never)."),
     defineParameter("zClip", "numeric", 10, 1, Inf, "Standardised covariates are clipped to +/- zClip."),
+    defineParameter("regimeArm", "character", "", NA, NA,
+                    paste0("Extra regime on the finished main design: \"FutureTaintedSpatial\" = the status quo with SPATIALLY blocked ",
+                           "validation inside the same training years (R/spatialRegime.R). Models go to testedModels_regime_<name>.")),
     defineParameter("featureSetArm", "logical", FALSE, NA, NA,
                     paste0("Follow-up experiment (needs a finished design in the output folder): train the status quo and PreVal with ",
                            "re-ordered / ablated covariate sets (see R/featureSets.R) on the SAME splits. Models go to ",
@@ -184,6 +187,23 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
         saveStrataStore(buildStrataStore(sim$preparedDataFinal, featureNames = sim$featurePriority$Feature),
                         storeDir)
       }
+      if (nzchar(P(sim)$regimeArm)) {
+        if (isTRUE(P(sim)$featureSetArm)) stop("Use either regimeArm or featureSetArm, not both.")
+        if (!havePlan) stop("regimeArm needs the finished main design (plan, splits, tensor store) in ", outDir)
+        rgPlan <- file.path(outDir, paste0("experimentPlan_regime_", P(sim)$regimeArm, ".csv"))
+        if (is.null(slice)) {   # design step: build the manifests of the new regime once (verified), write its plan
+          metaRg <- readRDS(file.path(storeDir, "store_meta.rds")); dpRg <- readRDS(file.path(outDir, "designParams.rds"))
+          if (is.null(dpRg$spatial)) stop("The main design has no spatial block object (designParams$spatial); run it with spatialTestYears.")
+          desRg <- makeSpatialRegimeDesign(metaRg$index, fread(planPath), manifestDir, dpRg$spatial, regime = P(sim)$regimeArm)
+          fwrite(desRg$plan, rgPlan)
+          fwrite(desRg$summary, file.path(outDir, paste0("regimeArm_", P(sim)$regimeArm, "_splits.csv")))
+          fwrite(desRg$checks, file.path(outDir, paste0("regimeArm_", P(sim)$regimeArm, "_checks.csv")))
+          if (!is.null(desRg$skipped)) fwrite(desRg$skipped, file.path(outDir, paste0("regimeArm_", P(sim)$regimeArm, "_skipped.csv")))
+          message(sprintf("Regime arm %s: %d models on %d splits.", P(sim)$regimeArm, nrow(desRg$plan), nrow(desRg$summary)))
+        }
+        if (!file.exists(rgPlan)) stop("Regime plan not found (run the design step first): ", rgPlan)
+        sim$experimentPlan <- fread(rgPlan)
+      }
       if (isTRUE(P(sim)$featureSetArm)) {
         if (!havePlan) stop("featureSetArm needs the finished main design (plan, splits, tensor store) in ", outDir)
         fsNames <- trimws(strsplit(P(sim)$featureSetNames, ",")[[1]])
@@ -207,8 +227,9 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
     trainExperiment = {
       slice <- if (anyNA(P(sim)$runSlice)) NULL else P(sim)$runSlice
       fsArm <- isTRUE(P(sim)$featureSetArm)
+      rgArm <- nzchar(P(sim)$regimeArm)
       fsTag <- if (nzchar(P(sim)$featureSetTag)) paste0("_", P(sim)$featureSetTag) else ""
-      savedPath <- file.path(outputPath(sim), if (fsArm) paste0("fittedModelPaths_featureSets", fsTag, ".csv") else "fittedModelPaths.csv")
+      savedPath <- file.path(outputPath(sim), if (rgArm) paste0("fittedModelPaths_regime_", P(sim)$regimeArm, ".csv") else if (fsArm) paste0("fittedModelPaths_featureSets", fsTag, ".csv") else "fittedModelPaths.csv")
       if (is.null(slice) && !P(sim)$reRunModels && file.exists(savedPath) &&
           nrow(fread(savedPath)) == nrow(sim$experimentPlan)) {
         message("Final results table found; loading.")
@@ -222,7 +243,7 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
           manifestDir = file.path(outputPath(sim), "splits"),
           featurePriority = sim$featurePriority, batchSize = P(sim)$batchSize, epoch = P(sim)$epoch,
           learningRate = P(sim)$learningRate,
-          outputDir = checkPath(file.path(outputPath(sim), if (fsArm) paste0("testedModels_featureSets", fsTag) else "testedModels"), create = TRUE),
+          outputDir = checkPath(file.path(outputPath(sim), if (rgArm) paste0("testedModels_regime_", P(sim)$regimeArm) else if (fsArm) paste0("testedModels_featureSets", fsTag) else "testedModels"), create = TRUE),
           featureSets = if (fsArm) sim$featureSetsTable else NULL,
           reRunModels = P(sim)$reRunModels, modComplex = P(sim)$modComplex, runSlice = slice,
           useGPU = P(sim)$useGPU, torchThreads = P(sim)$torchThreads, zClip = P(sim)$zClip,
@@ -235,6 +256,20 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
     },
     compareExperiment = {
       outDir <- outputPath(sim)
+      if (nzchar(P(sim)$regimeArm)) {
+        planRg <- fread(file.path(outDir, paste0("experimentPlan_regime_", P(sim)$regimeArm, ".csv")))
+        doneRg <- list.files(file.path(outDir, paste0("testedModels_regime_", P(sim)$regimeArm)), pattern = "_finalDT\\.csv$")
+        missingRg <- setdiff(paste0(planRg$modelName, "_finalDT.csv"), doneRg)
+        if (length(missingRg)) {
+          writeLines(missingRg, file.path(outDir, paste0("modelsMissing_regime_", P(sim)$regimeArm, ".txt")))
+          stop(length(missingRg), " regime-arm models have no result (see modelsMissing_regime_", P(sim)$regimeArm, ".txt).")
+        }
+        sim$modelComparisons <- analyzeRegimeArm(modelDir = file.path(outDir, paste0("testedModels_regime_", P(sim)$regimeArm)),
+                                                 mainDir = file.path(outDir, "testedModels"),
+                                                 outDir = file.path(outDir, paste0("analysis_regime_", P(sim)$regimeArm)),
+                                                 regime = P(sim)$regimeArm)
+        return(invisible(sim))
+      }
       if (isTRUE(P(sim)$featureSetArm)) {
         fsTag <- if (nzchar(P(sim)$featureSetTag)) paste0("_", P(sim)$featureSetTag) else ""
         planFs <- fread(file.path(outDir, paste0("experimentPlan_featureSets", fsTag, ".csv")))

@@ -8,7 +8,7 @@ here <- if (length(fileArg)) dirname(normalizePath(sub("--file=", "", fileArg)))
 modDir <- normalizePath(file.path(here, ".."))
 globalDir <- normalizePath(file.path(modDir, "..", "caribouNN_Global"), mustWork = FALSE)
 for (f in c("stratumNet.R", "buildSplits.R", "verifySplits.R", "generateExperimentPlan.R", "strataStore.R",
-            "trainingExperimentNN.R", "theExperiment.R", "analyzeExperiment.R", "featureSets.R")) source(file.path(modDir, "R", f))
+            "trainingExperimentNN.R", "theExperiment.R", "analyzeExperiment.R", "featureSets.R", "spatialRegime.R")) source(file.path(modDir, "R", f))
 nFail <- 0L
 check <- function(cond, msg) {
   ok <- isTRUE(cond)
@@ -232,6 +232,29 @@ if (!is.null(features)) {
   anFs <- analyzeFeatureSets(file.path(out, "armModels"), file.path(out, "models4"), file.path(out, "analysisFs"))
   check(all(c("levels", "penalty", "shape_per_regime") %in% names(anFs)) && file.exists(file.path(out, "analysisFs", "FS_penalty.csv")),
         "analyzeFeatureSets writes its tables")
+
+  # ---- spatially blocked status-quo regime ("FutureTaintedSpatial") ---------------------------------------------------------
+  spB <- assignSpatialBlocks(idx, blockKm = 250, bufferKm = 20, nFolds = 3L, seed = 11L)
+  rgd <- makeSpatialRegimeDesign(idx, des$plan[testYear >= 2016], manDir, spB, minTrain = 100L, minTrainFraction = 0.3)
+  check(nrow(rgd$checks) > 0 && all(rgd$checks$ok), "spatial regime: gate passes for every split")
+  check(all(rgd$summary$nTrain <= rgd$summary$nTrainStatusQuo) && all(rgd$summary$nVal > 0),
+        "spatial regime: training is the status-quo pool minus the validation blocks and their buffer")
+  check(!anyDuplicated(rgd$plan$modelName) && all(rgd$plan$typeValidation == "FutureTaintedSpatial") &&
+          all(grepl("_FutureTaintedSpatial$", rgd$plan$modelName)), "spatial regime plan: own regime and unique names")
+  sidT <- rgd$summary$splitId[1]
+  mT <- readManifest(manDir, sidT, "FutureTaintedSpatial"); unT <- readManifest(manDir, sidT, "FutureUnseen")
+  check(setequal(mT$row[mT$set == "test"], unT$row[unT$set == "test"]), "spatial regime: same shared test set as PreVal")
+  vb <- unique(spB$key[mT$row[mT$set == "val"]])
+  check(!any(.blockZone(idx, spB, vb)[mT$row[mT$set == "train"]]), "spatial regime: no training stratum inside a validation block or its buffer")
+  leak <- data.table::copy(mT)
+  vrow <- mT$row[mT$set == "val"][1]; leak[row == mT$row[mT$set == "train"][1], row := vrow][, set := set]   # a duplicated stratum
+  check(inherits(tryCatch(verifySpatialTainted(idx, leak, unT, spB, "leak"), error = function(e) e), "error"), "spatial regime: the gate stops an injected leak")
+  rgSel <- rgd$plan[numberOfCovariates %in% c(2, Inf)]
+  rgRes <- theExperiment(store, rgSel, manDir, fp, batchSize = 64, epoch = 2, learningRate = 0.01, outputDir = file.path(out, "models_rg"))
+  check(nrow(rgRes) == nrow(rgSel) && all(rgRes$typeValidation == "FutureTaintedSpatial"), "spatial regime: models train with their own manifests")
+  anRg <- analyzeRegimeArm(file.path(out, "models_rg"), file.path(out, "models4"), file.path(out, "analysis_rg"))
+  check(all(c("levels", "contrasts", "optimism_pooled") %in% names(anRg)) && file.exists(file.path(out, "analysis_rg", "RA_contrasts.csv")),
+        "analyzeRegimeArm writes its tables")
 }
 cat(sprintf("\n%d failure(s)\n", nFail))
 if (nFail) quit(status = 1)
