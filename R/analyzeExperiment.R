@@ -348,7 +348,7 @@ analysisFigures <- function(M, W, Wl, out, modelDir, outDir, chance) {
 
   # 5. Learning curves of example models (largest split, most covariates) + how training ended
   ex <- Mt[arm == "temporal"][which.max(nTrain)]
-  exm <- Mt[splitId == ex$splitId & numberOfCovariates == max(numberOfCovariates)]
+  exm <- Mt[splitId == ex$splitId & numberOfCovariates == max(numberOfCovariates) & replicate == min(replicate)]   # one replicate: overlaid replicates make a saw-tooth
   hist <- data.table::rbindlist(lapply(seq_len(nrow(exm)), function(i) {
     f <- file.path(modelDir, paste0(exm$modelName[i], "_history.csv")); if (!file.exists(f)) return(NULL)
     h <- data.table::fread(f); h[, `:=`(regime = exm$regime[i], bestEpoch = exm$bestEpoch[i])]
