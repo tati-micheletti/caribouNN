@@ -44,7 +44,10 @@ defineModule(sim, list(
     defineParameter("featureSetArm", "logical", FALSE, NA, NA,
                     paste0("Follow-up experiment (needs a finished design in the output folder): train the status quo and PreVal with ",
                            "re-ordered / ablated covariate sets (see R/featureSets.R) on the SAME splits. Models go to ",
-                           "testedModels_featureSets; the main experiment is not touched.")),
+                           "testedModels_featureSets[_tag]; the main experiment is not touched.")),
+    defineParameter("featureSetTag", "character", "", NA, NA,
+                    paste0("Name of this feature-set experiment (empty = the first experiment). Outputs go to folders and files with ",
+                           "this suffix, so several experiments can live in one output folder.")),
     defineParameter("featureSetNames", "character", "habitatOnly,habitatFirst,movementFirst,randomA,randomB", NA, NA,
                     "Comma-separated feature sets of the arm."),
     defineParameter("featureSetLevels", "character", "2,5,10,20", NA, NA,
@@ -190,8 +193,9 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
                                                  registryPath = if (is.null(slice)) file.path(outDir, "seedRegistry.csv") else NULL)
         sim$featureSetsTable <- fsets
         if (is.null(slice)) {   # written once by the design step; training tasks rebuild the identical plan (seeded)
-          fwrite(fsets, file.path(outDir, "featureSets.csv"))
-          fwrite(sim$experimentPlan, file.path(outDir, "experimentPlan_featureSets.csv"))
+          fsTag <- if (nzchar(P(sim)$featureSetTag)) paste0("_", P(sim)$featureSetTag) else ""
+          fwrite(fsets, file.path(outDir, paste0("featureSets", fsTag, ".csv")))
+          fwrite(sim$experimentPlan, file.path(outDir, paste0("experimentPlan_featureSets", fsTag, ".csv")))
           message(sprintf("Feature-set arm: %d models (%s; levels %s).", nrow(sim$experimentPlan),
                           paste(fsNames, collapse = ", "), paste(fsLevels, collapse = ", ")))
         }
@@ -203,7 +207,8 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
     trainExperiment = {
       slice <- if (anyNA(P(sim)$runSlice)) NULL else P(sim)$runSlice
       fsArm <- isTRUE(P(sim)$featureSetArm)
-      savedPath <- file.path(outputPath(sim), if (fsArm) "fittedModelPaths_featureSets.csv" else "fittedModelPaths.csv")
+      fsTag <- if (nzchar(P(sim)$featureSetTag)) paste0("_", P(sim)$featureSetTag) else ""
+      savedPath <- file.path(outputPath(sim), if (fsArm) paste0("fittedModelPaths_featureSets", fsTag, ".csv") else "fittedModelPaths.csv")
       if (is.null(slice) && !P(sim)$reRunModels && file.exists(savedPath) &&
           nrow(fread(savedPath)) == nrow(sim$experimentPlan)) {
         message("Final results table found; loading.")
@@ -217,7 +222,7 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
           manifestDir = file.path(outputPath(sim), "splits"),
           featurePriority = sim$featurePriority, batchSize = P(sim)$batchSize, epoch = P(sim)$epoch,
           learningRate = P(sim)$learningRate,
-          outputDir = checkPath(file.path(outputPath(sim), if (fsArm) "testedModels_featureSets" else "testedModels"), create = TRUE),
+          outputDir = checkPath(file.path(outputPath(sim), if (fsArm) paste0("testedModels_featureSets", fsTag) else "testedModels"), create = TRUE),
           featureSets = if (fsArm) sim$featureSetsTable else NULL,
           reRunModels = P(sim)$reRunModels, modComplex = P(sim)$modComplex, runSlice = slice,
           useGPU = P(sim)$useGPU, torchThreads = P(sim)$torchThreads, zClip = P(sim)$zClip,
@@ -231,16 +236,17 @@ doEvent.caribouNN = function(sim, eventTime, eventType) {
     compareExperiment = {
       outDir <- outputPath(sim)
       if (isTRUE(P(sim)$featureSetArm)) {
-        planFs <- fread(file.path(outDir, "experimentPlan_featureSets.csv"))
-        doneFs <- list.files(file.path(outDir, "testedModels_featureSets"), pattern = "_finalDT\\.csv$")
+        fsTag <- if (nzchar(P(sim)$featureSetTag)) paste0("_", P(sim)$featureSetTag) else ""
+        planFs <- fread(file.path(outDir, paste0("experimentPlan_featureSets", fsTag, ".csv")))
+        doneFs <- list.files(file.path(outDir, paste0("testedModels_featureSets", fsTag)), pattern = "_finalDT\\.csv$")
         missingFs <- setdiff(paste0(planFs$modelName, "_finalDT.csv"), doneFs)
         if (length(missingFs)) {
-          writeLines(missingFs, file.path(outDir, "modelsMissing_featureSets.txt"))
-          stop(length(missingFs), " feature-set models have no result (see modelsMissing_featureSets.txt).")
+          writeLines(missingFs, file.path(outDir, paste0("modelsMissing_featureSets", fsTag, ".txt")))
+          stop(length(missingFs), " feature-set models have no result (see modelsMissing_featureSets", fsTag, ".txt).")
         }
-        sim$modelComparisons <- analyzeFeatureSets(modelDir = file.path(outDir, "testedModels_featureSets"),
+        sim$modelComparisons <- analyzeFeatureSets(modelDir = file.path(outDir, paste0("testedModels_featureSets", fsTag)),
                                                    mainDir = file.path(outDir, "testedModels"),
-                                                   outDir = file.path(outDir, "analysis_featureSets"))
+                                                   outDir = file.path(outDir, paste0("analysis_featureSets", fsTag)))
         return(invisible(sim))
       }
       plan <- fread(file.path(outDir, "experimentPlan.csv"))

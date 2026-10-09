@@ -27,6 +27,23 @@ buildFeatureSets <- function(featureTable, sets = c("habitatOnly", "habitatFirst
   mv <- movementFamily(f, movementPattern)
   habitat <- f[!mv]; movement <- f[mv]
   ord <- list(habitatOnly = habitat, habitatFirst = c(habitat, movement), movementFirst = c(movement, habitat))
+  # Interaction experiment. Each `inter_logSl_x_<X>_start*` term multiplies the log step length with a covariate measured at the
+  # START of the step. Start covariates are the same for all 11 candidate steps of a stratum, so on their own they cannot tell the
+  # candidates apart (they can only act together with step-varying covariates). The matching `_end*` covariate is measured at the
+  # candidate's end point and does discriminate. Sets, all in the importance order of the interaction terms:
+  #   interactionsOnly   the interaction terms
+  #   endOnly            the matching end-point covariates (habitat selection)
+  #   startOnly          the matching start covariates (constant within a stratum)
+  #   endPlusInteractions  both, interleaved in pairs
+  inter <- f[grepl("^inter_logSl_x_", f)]
+  startOf <- sub("^inter_logSl_x_", "", inter)
+  endOf <- sub("_startLog$", "_endLog", sub("_start$", "_end", startOf))
+  if (length(inter) && all(startOf %in% f) && all(endOf %in% f)) {
+    ord$interactionsOnly <- inter
+    ord$endOnly <- endOf
+    ord$startOnly <- startOf
+    ord$endPlusInteractions <- as.vector(rbind(inter, endOf))
+  }
   for (s in grep("^random", sets, value = TRUE))
     ord[[s]] <- withSeed(stringSeed(paste("featureSet", s)), sample(f))
   stopifnot(all(sets %in% names(ord)))
@@ -116,10 +133,10 @@ analyzeFeatureSets <- function(modelDir, mainDir, outDir, regimes = c("FutureUns
     cols <- c(FutureUnseen = "#1F6FB5", FutureTainted = "#E08A00"); labs <- c(FutureUnseen = "PreVal", FutureTainted = "Status quo")
     pp <- D[, .(med = stats::median(penalty), q25 = stats::quantile(penalty, .25), q75 = stats::quantile(penalty, .75)), by = .(featureSet, typeValidation, k)]
     pp[, regime := factor(typeValidation, names(cols), labs[names(cols)])]
-    pp[, featureSet := factor(featureSet, c("main", "habitatOnly", "habitatFirst", "movementFirst", "randomA", "randomB"))]
+    pp[, featureSet := factor(featureSet, c("main", setdiff(unique(featureSet), "main")))]
     g <- ggplot(pp, aes(k, med, colour = regime, fill = regime)) + geom_hline(yintercept = 0, linetype = 2) +
       geom_ribbon(aes(ymin = q25, ymax = q75), alpha = 0.12, colour = NA) + geom_line(linewidth = 1) + geom_point(size = 2) +
-      facet_wrap(~ featureSet, nrow = 2) + scale_colour_manual(values = unname(setNames(cols, labs[names(cols)]))) +
+      facet_wrap(~ featureSet, nrow = if (length(unique(pp$featureSet)) > 4) 2 else 1) + scale_colour_manual(values = unname(setNames(cols, labs[names(cols)]))) +
       scale_fill_manual(values = unname(setNames(cols, labs[names(cols)]))) + theme_bw(base_size = 12) + theme(legend.position = "bottom") +
       labs(x = "Number of covariates", y = "Loss minus the same split's loss with the set's smallest level",
            title = "Does the hump follow the covariates or the count?",

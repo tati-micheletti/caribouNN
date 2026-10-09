@@ -210,6 +210,13 @@ if (!is.null(features)) {
           identical(fsA[set == "movementFirst"]$Feature[1:2], c("f1", "f2")), "habitatFirst / movementFirst order the families")
   check(all(sapply(c("randomA", "randomB"), function(s) setequal(fsA[set == s]$Feature, features))) &&
           !identical(fsA[set == "randomA"]$Feature, fsA[set == "randomB"]$Feature), "random orders are permutations and differ")
+  ft2 <- data.table(Feature = c("a_endLog", "inter_logSl_x_a_startLog", "logSl", "b_end", "inter_logSl_x_b_start", "a_startLog", "b_start", "c_end"))
+  fs2 <- buildFeatureSets(ft2, sets = c("interactionsOnly", "endOnly", "startOnly", "endPlusInteractions"))
+  check(identical(fs2[set == "interactionsOnly"]$Feature, c("inter_logSl_x_a_startLog", "inter_logSl_x_b_start")) &&
+          identical(fs2[set == "endOnly"]$Feature, c("a_endLog", "b_end")) &&
+          identical(fs2[set == "startOnly"]$Feature, c("a_startLog", "b_start")) &&
+          identical(fs2[set == "endPlusInteractions"]$Feature, c("inter_logSl_x_a_startLog", "a_endLog", "inter_logSl_x_b_start", "b_end")),
+        "interaction experiment sets: interactions, matching end covariates, matching start covariates, and the pairs")
   armPlan <- makeFeatureSetPlan(des$plan[testYear >= 2016], fsA, levels = c(2, 5, 10, 20))
   check(all(armPlan$arm == "temporal") && setequal(unique(armPlan$typeValidation), c("FutureUnseen", "FutureTainted")) &&
           !anyDuplicated(armPlan$modelName) && all(armPlan$numberOfCovariates <= 6),
